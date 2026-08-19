@@ -1,24 +1,26 @@
+use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct ProcessIo {
     pub open_files: Vec<String>,
     pub unix_sockets: Vec<String>,
     pub network_connections: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct DiskIoStats {
     pub read_bytes: u64,
     pub write_bytes: u64,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 pub struct DiskIoRate {
     pub read_bytes_per_sec: f64,
     pub write_bytes_per_sec: f64,
 }
+
 
 impl DiskIoRate {
     pub fn calculate(start: Option<DiskIoStats>, end: Option<DiskIoStats>, duration_secs: f64) -> Option<Self> {

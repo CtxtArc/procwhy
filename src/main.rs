@@ -8,6 +8,7 @@ use colored::*;
 use finder::{parse_target_query, resolve_pid, TargetQuery};
 use heuristics::{analyze_snapshot, redact_env_var, ProcessSnapshot, Severity};
 use io::{format_bytes_rate, get_disk_io, get_process_io, get_wchan, DiskIoRate};
+use serde::Serialize;
 use std::fmt::Write as _;
 use std::io::IsTerminal;
 use std::thread;
@@ -29,9 +30,45 @@ struct Cli {
     #[arg(short, long)]
     all: bool,
 
+    /// Output full diagnostic report in structured JSON format
+    #[arg(short, long)]
+    json: bool,
+
     /// Do not pipe output into a pager (e.g. less)
     #[arg(long)]
     no_pager: bool,
+}
+
+#[derive(Serialize)]
+struct JsonReport {
+    pid: u32,
+    name: String,
+    cmd: Vec<String>,
+    status: String,
+    verdict: Vec<heuristics::Finding>,
+    stats: JsonStats,
+    environment: Vec<String>,
+    children: Vec<JsonChild>,
+    network: Vec<String>,
+    unix_sockets: Vec<String>,
+    open_files: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct JsonStats {
+    cpu_usage_percent: f32,
+    memory_bytes: u64,
+    memory_mb: f64,
+    memory_percent_system: Option<f64>,
+    total_system_memory_bytes: u64,
+    disk_io_rate: Option<DiskIoRate>,
+    wchan: Option<String>,
+}
+
+#[derive(Serialize)]
+struct JsonChild {
+    pid: u32,
+    name: String,
 }
 
 fn main() -> Result<()> {
@@ -96,6 +133,56 @@ fn main() -> Result<()> {
     };
     let findings = analyze_snapshot(&snapshot);
 
+    // JSON Output Mode
+    if cli.json {
+        let env_redacted: Vec<String> = process
+            .environ()
+            .iter()
+            .map(|e| redact_env_var(e))
+            .collect();
+
+        let children_json: Vec<JsonChild> = children
+            .iter()
+            .map(|c| JsonChild {
+                pid: c.pid().as_u32(),
+                name: c.name().to_string(),
+            })
+            .collect();
+
+        let memory_mb = process.memory() as f64 / 1024.0 / 1024.0;
+        let mem_pct = if total_memory > 0 {
+            Some((process.memory() as f64 / total_memory as f64) * 100.0)
+        } else {
+            None
+        };
+
+        let report = JsonReport {
+            pid: target_pid,
+            name: process.name().to_string(),
+            cmd: cmd_vec,
+            status: format!("{:?}", process.status()),
+            verdict: findings,
+            stats: JsonStats {
+                cpu_usage_percent: process.cpu_usage(),
+                memory_bytes: process.memory(),
+                memory_mb,
+                memory_percent_system: mem_pct,
+                total_system_memory_bytes: total_memory,
+                disk_io_rate: disk_rate,
+                wchan,
+            },
+            environment: env_redacted,
+            children: children_json,
+            network: io.network_connections,
+            unix_sockets: io.unix_sockets,
+            open_files: io.open_files,
+        };
+
+        let json_str = serde_json::to_string_pretty(&report)?;
+        println!("{}", json_str);
+        return Ok(());
+    }
+
     let mut out = String::new();
 
     let header_suffix = match &query {
@@ -105,6 +192,7 @@ fn main() -> Result<()> {
         }
         _ => String::new(),
     };
+
 
     writeln!(
         out,

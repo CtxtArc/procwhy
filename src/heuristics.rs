@@ -1,20 +1,23 @@
 use crate::io::{DiskIoRate, ProcessIo};
+use serde::Serialize;
 use sysinfo::ProcessStatus;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Severity {
     Info,
     Warning,
     Critical,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Finding {
     pub severity: Severity,
     pub category: &'static str,
     pub message: String,
     pub recommendation: Option<String>,
 }
+
 
 pub struct ProcessSnapshot<'a> {
     pub pid: u32,
@@ -60,19 +63,19 @@ fn check_wchan_and_state(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>
             severity: Severity::Critical,
             category: "D-STATE HANG",
             message: format!(
-                "Process is in uninterruptible sleep (D-state) on kernel '{}'. It cannot be killed until I/O unblocks.",
+                "Process is stuck in Uninterruptible Sleep (D-state) on kernel '{}'. Signals (including kill -9) are blocked by the kernel until I/O unblocks.",
                 wchan_info
             ),
             recommendation: Some(
-                "Check storage devices, slow NFS mounts, or device driver status.".to_string(),
+                "Inspect storage subsystem, slow/hanging NFS mounts, or device driver timeouts.".to_string(),
             ),
         });
     } else if let Some(wchan) = snapshot.wchan {
         if wchan.contains("futex") && snapshot.cpu_usage == 0.0 {
             findings.push(Finding {
                 severity: Severity::Info,
-                category: "LOCK WAIT",
-                message: format!("Process is waiting in kernel wait channel '{}' (futex lock).", wchan),
+                category: "LOCK CONTENTION",
+                message: format!("Process threads are waiting on a kernel futex synchronization lock ('{}').", wchan),
                 recommendation: None,
             });
         }
@@ -97,7 +100,7 @@ fn check_disk_io_rate(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
                     total_mb_s, read_mb_s, write_mb_s
                 ),
                 recommendation: Some(
-                    "Check for excessive file flushing, unbuffered logging, or swap activity.".to_string(),
+                    "Check for unbuffered file logging, large disk dumps, or swap thrashing.".to_string(),
                 ),
             });
         }
@@ -110,8 +113,8 @@ fn check_child_processes(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>
             severity: Severity::Warning,
             category: "HIGH CHILD COUNT",
             message: format!(
-                "Process (PID {}) has spawned {} child processes.",
-                snapshot.pid, snapshot.children_count
+                "Process has spawned {} active child processes/workers (PID {}).",
+                snapshot.children_count, snapshot.pid
             ),
             recommendation: Some(
                 "Ensure child processes are reaped to avoid process table exhaustion.".to_string(),
@@ -134,11 +137,11 @@ fn check_zombie_state(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
             severity: Severity::Critical,
             category: "ZOMBIE PROCESS",
             message: format!(
-                "Defunct process. Terminated but not reaped by {}.",
+                "Defunct process. It has terminated but {} has not called waitpid() to reap it.",
                 parent_info
             ),
             recommendation: Some(format!(
-                "Signal {} to reap terminated children.",
+                "Signal {} to reap terminated child processes.",
                 parent_info
             )),
         });
@@ -160,11 +163,11 @@ fn check_memory_usage(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
             severity: Severity::Critical,
             category: "CRITICAL RAM",
             message: format!(
-                "Process uses {:.1} MB ({:.1}% of {:.1} GB system RAM).",
+                "Consuming {:.1} MB ({:.1}% of {:.1} GB system RAM), creating high risk of kernel OOM-killer termination.",
                 mem_mb, mem_pct, total_gb
             ),
             recommendation: Some(
-                "High risk of OOM-killer termination. Check for memory leaks.".to_string(),
+                "Check for memory leaks or configure container memory limits.".to_string(),
             ),
         });
     } else if mem_pct >= 20.0 {
@@ -172,11 +175,11 @@ fn check_memory_usage(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
             severity: Severity::Warning,
             category: "HIGH RAM",
             message: format!(
-                "Process uses {:.1} MB ({:.1}% of {:.1} GB system RAM).",
+                "Process consumes {:.1} MB ({:.1}% of {:.1} GB system RAM).",
                 mem_mb, mem_pct, total_gb
             ),
             recommendation: Some(
-                "Verify memory growth or configure cgroup memory limits.".to_string(),
+                "Verify memory growth profile or configure cgroup memory limits.".to_string(),
             ),
         });
     }
@@ -188,11 +191,11 @@ fn check_cpu_usage(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
             severity: Severity::Warning,
             category: "HIGH CPU",
             message: format!(
-                "Process is at {:.1}% CPU usage.",
+                "Process is consuming {:.1}% CPU (sustained busy loop or heavy computation).",
                 snapshot.cpu_usage
             ),
             recommendation: Some(
-                "Profile threads for tight loops or lock contention.".to_string(),
+                "Profile active threads for spinlocks or unthrottled polling loops.".to_string(),
             ),
         });
     }
@@ -221,10 +224,10 @@ fn check_wildcard_binds(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>)
         let count = wildcard_listeners.len();
         let sample = wildcard_listeners[0].clone();
         let desc = if count == 1 {
-            format!("Listening on wildcard interface: {}", sample)
+            format!("Publicly listening on wildcard interface: {}", sample)
         } else {
             format!(
-                "Listening on {} wildcard interfaces ({})",
+                "Publicly listening on {} wildcard interfaces ({})",
                 count, sample
             )
         };
@@ -232,9 +235,9 @@ fn check_wildcard_binds(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>)
         findings.push(Finding {
             severity: Severity::Warning,
             category: "WILDCARD BIND",
-            message: format!("{}, exposed on all network interfaces.", desc),
+            message: format!("{}, exposing the service to all reachable network interfaces.", desc),
             recommendation: Some(
-                "Bind to 127.0.0.1 if public external access is unintended.".to_string(),
+                "Bind to 127.0.0.1 or a private interface if public external access is unintended.".to_string(),
             ),
         });
     }
@@ -260,11 +263,11 @@ fn check_external_tcp_connections(snapshot: &ProcessSnapshot, findings: &mut Vec
             severity: Severity::Warning,
             category: "HIGH TCP CONNS",
             message: format!(
-                "{} active external TCP connections (threshold: 10).",
+                "Process has {} active external TCP connections (threshold: 10).",
                 external_count
             ),
             recommendation: Some(
-                "Inspect connection pooling or HTTP keep-alive settings.".to_string(),
+                "Check for connection pool leaks, unclosed HTTP clients, or high external traffic.".to_string(),
             ),
         });
     }
@@ -286,15 +289,16 @@ fn check_deleted_open_files(snapshot: &ProcessSnapshot, findings: &mut Vec<Findi
             severity: Severity::Warning,
             category: "DELETED FILES",
             message: format!(
-                "{} open file handles point to deleted files (e.g. {}). Disk space remains held until closed.",
+                "Process holds {} open file handle(s) to unlinked/deleted files (e.g. {}). Disk space remains allocated on the filesystem until closed.",
                 count, sample
             ),
             recommendation: Some(
-                "Restart the process to release deleted file handles and free disk space.".to_string(),
+                "Restart or signal the process to release deleted file handles and reclaim disk space.".to_string(),
             ),
         });
     }
 }
+
 
 fn check_privileged_ports(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
     let mut priv_ports = Vec::new();

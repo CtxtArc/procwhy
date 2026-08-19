@@ -5,7 +5,8 @@ edition = "2024"
 description = "Lightweight diagnostic process inspector for Linux and macOS"
 
 authors = ["CtxtArc"]
-license = "MIT OR Apache-2.0"
+license = "MIT"
+
 readme = "README.md"
 repository = "https://github.com/CtxtArc/procwhy"
 homepage = "https://github.com/CtxtArc/procwhy"
@@ -18,3 +19,6 @@ clap = { version = "4.4", features = ["derive"] }
 colored = "2.1"
 anyhow = "1.0"
 procfs = "0.16"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
