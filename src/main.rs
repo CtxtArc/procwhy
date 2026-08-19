@@ -7,7 +7,7 @@ use clap::Parser;
 use colored::*;
 use finder::{parse_target_query, resolve_pid, TargetQuery};
 use heuristics::{analyze_snapshot, generate_summary, redact_env_var, Confidence, Health, ProcessSnapshot, Severity};
-use io::{format_bytes_rate, get_disk_io, get_process_io, get_wchan, DiskIoRate};
+use io::{format_bytes_rate, get_disk_io, get_fd_count, get_process_io, get_wchan, DiskIoRate};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -29,7 +29,7 @@ struct Cli {
     #[arg(short, long, value_name = "PORT")]
     port: Option<u16>,
 
-    /// Show all files, sockets, children, and environment variables without truncation
+    /// Show all files, sockets, and children without truncation
     #[arg(short, long)]
     all: bool,
 
@@ -296,6 +296,7 @@ fn main() -> Result<()> {
         .collect();
 
     let total_memory = sys.total_memory();
+    let fd_count = get_fd_count(target_pid);
     let snapshot = ProcessSnapshot {
         pid: target_pid,
         name: process.name(),
@@ -306,6 +307,7 @@ fn main() -> Result<()> {
         status: process.status(),
         parent_pid: process.parent().map(|p| p.as_u32()),
         children_count: children.len(),
+        fd_count,
         io: &io,
         disk_io_rate: disk_rate,
         wchan: wchan.as_deref(),
@@ -681,7 +683,7 @@ fn should_use_pager(no_pager: bool) -> bool {
     if no_pager {
         return false;
     }
-    if std::env::var("PROCWY_NO_PAGER").is_ok() {
+    if std::env::var("PROCWHY_NO_PAGER").is_ok() {
         return false;
     }
     if let Ok(pager) = std::env::var("PAGER") {
@@ -699,7 +701,7 @@ fn should_use_pager(no_pager: bool) -> bool {
 
 fn print_output(content: &str, no_pager: bool) -> Result<()> {
     if should_use_pager(no_pager) {
-        let pager_cmd = std::env::var("PROCWY_PAGER")
+        let pager_cmd = std::env::var("PROCWHY_PAGER")
             .or_else(|_| std::env::var("PAGER"))
             .unwrap_or_else(|_| "less".to_string());
 
@@ -737,7 +739,7 @@ fn print_output(content: &str, no_pager: bool) -> Result<()> {
     use std::io::Write;
     let stdout = std::io::stdout();
     let mut handle = stdout.lock();
-    let _ = handle.write_all(content.as_bytes())?;
+    handle.write_all(content.as_bytes())?;
     Ok(())
 }
 
@@ -783,7 +785,7 @@ mod tests {
     #[test]
     fn test_json_report_serialization() {
         let report = JsonReport {
-            procwhy_version: "1.0.0",
+            procwhy_version: "0.1.0",
             pid: 1234,
             name: "test-service".to_string(),
             cmd: vec!["node".to_string(), "server.js".to_string()],

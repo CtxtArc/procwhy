@@ -1,7 +1,7 @@
 class Procwhy < Formula
   desc "Diagnostic snapshot tool for interrogating processes and explaining their footprint"
   homepage "https://github.com/CtxtArc/procwhy"
-  version "1.0.0"
+  version "0.1.0"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do

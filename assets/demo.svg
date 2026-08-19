@@ -30,7 +30,7 @@
     <text y="16"><tspan class="prompt-user">user</tspan><tspan class="prompt-at">@</tspan><tspan class="prompt-user">prod-api-01</tspan><tspan class="prompt-at">:</tspan><tspan class="prompt-path">~</tspan><tspan class="prompt-char">$</tspan> <tspan class="cmd">procwhy :8080</tspan></text>
 
     <!-- Header -->
-    <text y="48"><tspan class="dim">procwhy</tspan> <tspan class="dim">1.0.0</tspan></text>
+    <text y="48"><tspan class="dim">procwhy</tspan> <tspan class="dim">0.1.0</tspan></text>
     <text y="78"><tspan class="yellow-bold">PORT :8080 ─> </tspan><tspan class="green">node</tspan> <tspan class="dim">(PID 4812)</tspan>  <tspan class="dim">node /srv/api/server.js</tspan></text>
     <text y="98" class="dim">────────────────────────────────────────────────────────────</text>
 

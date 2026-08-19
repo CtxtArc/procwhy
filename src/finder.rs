@@ -126,9 +126,7 @@ pub fn resolve_pid_by_name(name: &str, sys: &System) -> Result<u32> {
     if sorted.len() > 5 {
         msg.push_str(&format!("  ...and {} more\n", sorted.len() - 5));
     }
-    msg.push_str(&format!(
-        "\nSpecify a PID: procwhy <PID>"
-    ));
+    msg.push_str("\nSpecify a PID: procwhy <PID>");
 
     bail!(msg);
 }

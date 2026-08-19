@@ -526,6 +526,18 @@ pub fn parse_lsof_output(stdout: &str) -> ProcessIo {
     io
 }
 
+#[cfg(target_os = "linux")]
+pub fn get_fd_count(pid: u32) -> usize {
+    std::fs::read_dir(format!("/proc/{}/fd", pid))
+        .map(|entries| entries.count())
+        .unwrap_or(0)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn get_fd_count(_pid: u32) -> usize {
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

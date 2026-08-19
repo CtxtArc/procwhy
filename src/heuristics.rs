@@ -57,39 +57,38 @@ pub fn generate_summary(findings: &[Finding]) -> String {
         return "Operating within normal resource thresholds and operating baseline.".to_string();
     }
 
-    let mut highlights = Vec::new();
+    let mut highlights: Vec<&str> = Vec::new();
     for f in findings {
-        match f.category {
-            "D-STATE HANG" => highlights.push("stuck in uninterruptible kernel sleep (D-state)"),
-            "OOM KILLER RISK" => highlights.push("consuming critical memory (high OOM risk)"),
-            "HIGH RAM" => highlights.push("consuming significant system RAM"),
-            "CPU PEGGING" => highlights.push("consuming unusually high CPU"),
-            "HIGH DISK I/O" => highlights.push("generating heavy disk throughput"),
-            "DELETED FILES" => highlights.push("holding open file handles to deleted files"),
-            "PUBLIC LISTENER" => highlights.push("publicly exposed on a wildcard interface"),
-            "HIGH TCP CONNS" => highlights.push("holding a high number of external connections"),
-            "HIGH FD COUNT" => highlights.push("maintaining a large number of open file descriptors"),
-            "ZOMBIE PROCESS" => highlights.push("defunct and awaiting reaping by parent"),
-            "HIGH CHILD COUNT" => highlights.push("spawning an unusually high number of children"),
-            "PRIVILEGED PORT" => highlights.push("bound to a privileged system port (<1024)"),
-            _ => highlights.push(f.category),
-        }
+        let label = match f.category {
+            "D-STATE HANG" => "stuck in uninterruptible kernel sleep (D-state)",
+            "OOM KILLER RISK" => "consuming critical memory (high OOM risk)",
+            "HIGH RAM" => "consuming significant system RAM",
+            "CPU PEGGING" => "consuming unusually high CPU",
+            "HIGH DISK I/O" => "generating heavy disk throughput",
+            "DELETED FILES" => "holding open file handles to deleted files",
+            "PUBLIC LISTENER" => "publicly exposed on a wildcard interface",
+            "HIGH TCP CONNS" => "holding a high number of external connections",
+            "HIGH FD COUNT" => "maintaining a large number of open file descriptors",
+            "ZOMBIE PROCESS" => "defunct and awaiting reaping by parent",
+            "HIGH CHILD COUNT" => "spawning an unusually high number of children",
+            "PRIVILEGED PORT" => "bound to a privileged system port (<1024)",
+            _ => f.category,
+        };
+        highlights.push(label);
     }
 
     highlights.dedup();
-    if highlights.len() == 1 {
-        format!("Process is {}.", highlights[0])
-    } else if highlights.len() == 2 {
-        format!("Process is {} and {}.", highlights[0], highlights[1])
-    } else {
-        format!(
-            "Process is {}, {}, and {}.",
-            highlights[0],
-            highlights[1],
-            highlights[2]
-        )
+    let n = highlights.len();
+    match n {
+        1 => format!("Process is {}.", highlights[0]),
+        2 => format!("Process is {} and {}.", highlights[0], highlights[1]),
+        _ => {
+            let all_but_last = highlights[..n - 1].join(", ");
+            format!("Process is {}, and {}.", all_but_last, highlights[n - 1])
+        }
     }
 }
+
 
 pub struct ProcessSnapshot<'a> {
     pub pid: u32,
@@ -101,10 +100,12 @@ pub struct ProcessSnapshot<'a> {
     pub status: ProcessStatus,
     pub parent_pid: Option<u32>,
     pub children_count: usize,
+    pub fd_count: usize,
     pub io: &'a ProcessIo,
     pub disk_io_rate: Option<DiskIoRate>,
     pub wchan: Option<&'a str>,
 }
+
 
 pub fn analyze_snapshot(snapshot: &ProcessSnapshot) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -146,24 +147,9 @@ fn check_wchan_and_state(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>
             interpretation: "Process is blocked in a kernel driver or storage I/O operation. POSIX signals (including SIGKILL / kill -9) are ignored until the kernel I/O request unblocks.".to_string(),
             recommendation: "Inspect storage subsystem, hung NFS mounts, or kernel dmesg logs for storage/driver timeouts.".to_string(),
         });
-    } else if let Some(wchan) = snapshot.wchan {
-        if wchan.contains("futex") && snapshot.cpu_usage == 0.0 {
-            findings.push(Finding {
-                category: "LOCK CONTENTION",
-                severity: Severity::Info,
-                confidence: Confidence::Likely,
-                observation: format!("Threads are sleeping in kernel wait channel '{}' with 0.0% CPU.", wchan),
-                evidence: vec![
-                    format!("Kernel wait channel: {}", wchan),
-                    "CPU utilization: 0.0%".to_string(),
-                    format!("Scheduler state: {:?}", snapshot.status),
-                ],
-                interpretation: "Likely waiting on a user-space synchronization primitive (e.g. pthread mutex / futex).".to_string(),
-                recommendation: "If the process is unresponsive, inspect thread stacks for deadlocks or lock starvation.".to_string(),
-            });
-        }
     }
 }
+
 
 fn check_disk_io_rate(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
     if let Some(rate) = snapshot.disk_io_rate {
@@ -312,11 +298,8 @@ fn check_wildcard_binds(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>)
         if conn.contains("LISTEN") {
             let is_wildcard = conn.contains("0.0.0.0:")
                 || conn.contains("[::]:")
-                || conn.contains("*: ")
-                || conn.contains("*:*")
-                || conn.contains("TCP *:")
-                || conn.starts_with("TCP 0.0.0.0:")
-                || conn.starts_with("TCP [::]:");
+                || conn.contains("*:")
+                || conn.contains("TCP *");
 
             if is_wildcard {
                 wildcard_listeners.push(conn.clone());
@@ -476,24 +459,28 @@ fn check_privileged_ports(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding
 }
 
 fn check_high_fd_count(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
-    let total_fds = snapshot.io.open_files.len()
-        + snapshot.io.unix_sockets.len()
-        + snapshot.io.network_connections.len();
+    let total_fds = if snapshot.fd_count > 0 {
+        snapshot.fd_count
+    } else {
+        snapshot.io.open_files.len()
+            + snapshot.io.unix_sockets.len()
+            + snapshot.io.network_connections.len()
+    };
 
-    if total_fds >= 100 {
+    // 256 is well above a healthy daemon baseline (stdio + epoll + sockets)
+    // but below the common default ulimit of 1024, giving a useful early warning.
+    if total_fds >= 256 {
         findings.push(Finding {
             category: "HIGH FD COUNT",
             severity: Severity::Info,
             confidence: Confidence::Confirmed,
-            observation: format!(
-                "Process has {} open file descriptors and sockets.",
-                total_fds
-            ),
+            observation: format!("Process has {} open file descriptors.", total_fds),
             evidence: vec![
+                format!("Total open FDs: {}", total_fds),
                 format!("Open files: {}", snapshot.io.open_files.len()),
                 format!("Sockets: {}", snapshot.io.unix_sockets.len() + snapshot.io.network_connections.len()),
             ],
-            interpretation: "Elevated descriptor usage approaching default process ulimit thresholds.".to_string(),
+            interpretation: "Elevated descriptor usage that may approach default ulimit thresholds on some systems.".to_string(),
             recommendation: "Check file descriptor limits (ulimit -n) to prevent EMFILE exhaustion.".to_string(),
         });
     }
@@ -503,7 +490,9 @@ fn extract_port(conn: &str) -> Option<u16> {
     if let Some(pos) = conn.rfind(':') {
         let rest = &conn[pos + 1..];
         let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        num_str.parse::<u16>().ok()
+        let port = num_str.parse::<u16>().ok()?;
+        // Port 0 is not a real bound port — skip to avoid false PRIVILEGED PORT findings
+        if port == 0 { None } else { Some(port) }
     } else {
         None
     }
@@ -560,6 +549,7 @@ mod tests {
             status: ProcessStatus::Run,
             parent_pid: Some(1),
             children_count: 0,
+            fd_count: 0,
             io,
             disk_io_rate: None,
             wchan: None,
@@ -714,6 +704,65 @@ mod tests {
         assert!(findings.iter().any(|f| f.category == "PRIVILEGED PORT"));
     }
 
+    #[test]
+    fn test_port_zero_is_not_privileged() {
+        // Port 0 appears in /proc/net/tcp for unbound sockets — must not trigger PRIVILEGED PORT
+        let io = ProcessIo {
+            open_files: vec![],
+            deleted_files: vec![],
+            unix_sockets: vec![],
+            network_connections: vec!["TCP 0.0.0.0:0 (LISTEN)".to_string()],
+        };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "PRIVILEGED PORT"));
+        // But it should still flag PUBLIC LISTENER (wildcard bind)
+        assert!(findings.iter().any(|f| f.category == "PUBLIC LISTENER"));
+    }
+
+    #[test]
+    fn test_cpu_pegging_threshold() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.cpu_usage = 95.0;
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "CPU PEGGING"));
+        let f = findings.iter().find(|f| f.category == "CPU PEGGING").unwrap();
+        assert_eq!(f.severity, Severity::Warning);
+        assert_eq!(f.confidence, Confidence::Likely);
+        // Just below threshold: no finding
+        snapshot.cpu_usage = 89.9;
+        let findings2 = analyze_snapshot(&snapshot);
+        assert!(!findings2.iter().any(|f| f.category == "CPU PEGGING"));
+    }
+
+    #[test]
+    fn test_high_child_count_threshold() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.children_count = 50;
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "HIGH CHILD COUNT"));
+        // Just below threshold: no finding
+        snapshot.children_count = 49;
+        let findings2 = analyze_snapshot(&snapshot);
+        assert!(!findings2.iter().any(|f| f.category == "HIGH CHILD COUNT"));
+    }
+
+    #[test]
+    fn test_high_fd_count_threshold() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        // Use fd_count field (real FD count path)
+        snapshot.fd_count = 256;
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "HIGH FD COUNT"));
+        // Just below threshold: no finding
+        snapshot.fd_count = 255;
+        let findings2 = analyze_snapshot(&snapshot);
+        assert!(!findings2.iter().any(|f| f.category == "HIGH FD COUNT"));
+    }
+
 
     #[test]
     fn test_redact_sensitive_environment_variables() {
@@ -832,6 +881,22 @@ mod tests {
         assert_eq!(
             generate_summary(&two_findings),
             "Process is consuming unusually high CPU and holding open file handles to deleted files."
+        );
+
+        // Three findings: tests the N>2 branch with Oxford-comma join
+        let make = |cat: &'static str| Finding {
+            category: cat,
+            severity: Severity::Warning,
+            confidence: Confidence::Likely,
+            observation: "test".to_string(),
+            evidence: vec![],
+            interpretation: "test".to_string(),
+            recommendation: "test".to_string(),
+        };
+        let three_findings = vec![make("CPU PEGGING"), make("DELETED FILES"), make("HIGH RAM")];
+        assert_eq!(
+            generate_summary(&three_findings),
+            "Process is consuming unusually high CPU, holding open file handles to deleted files, and consuming significant system RAM."
         );
     }
 }
