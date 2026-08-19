@@ -19,7 +19,7 @@ use sysinfo::{Pid, System, Users};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Parser)]
-#[command(author, version, about = "What is wrong with this process right now?")]
+#[command(author, version, about = "Turn raw OS telemetry into actionable process diagnoses")]
 struct Cli {
     /// PID, process name (e.g. 'node'), or port (e.g. ':8080') to inspect
     #[arg(value_name = "TARGET")]
@@ -237,9 +237,9 @@ fn run_benchmark() -> Result<()> {
     let p50 = warm_samples[warm_samples.len() / 2];
     let p95 = warm_samples[(warm_samples.len() * 95) / 100];
 
-    println!("\n{:<12} {:?}", "Cold startup:", cold_dur);
-    println!("{:<12} {:?}", "Warm (p50):", p50);
-    println!("{:<12} {:?}", "Warm (p95):", p95);
+    println!("\n{:<14} {:?}", "Cold startup:", cold_dur);
+    println!("{:<14} {:?}", "Warm (p50):", p50);
+    println!("{:<14} {:?}", "Warm (p95):", p95);
     println!("\n{}", "Verdict: Well within the <500ms incident latency budget.".green().bold());
 
     Ok(())
@@ -517,14 +517,14 @@ fn main() -> Result<()> {
             };
 
             writeln!(out, "  {} [{}]  {}", sev_str, cat_str, conf_badge)?;
-            writeln!(out, "    {:<16} {}", "Why:".dimmed(), finding.why)?;
+            writeln!(out, "    {:<16} {}", "Observation:".dimmed(), finding.observation)?;
 
             if !finding.evidence.is_empty() {
                 let ev_line = finding.evidence.join(" | ");
                 writeln!(out, "    {:<16} {}", "Evidence:".dimmed(), ev_line)?;
             }
 
-            writeln!(out, "    {:<16} {}", "Impact:".dimmed(), finding.impact)?;
+            writeln!(out, "    {:<16} {}", "Interpretation:".dimmed(), finding.interpretation)?;
             writeln!(out, "    {:<16} {}", "Recommendation:".dimmed(), finding.recommendation)?;
             writeln!(out)?;
         }
@@ -811,9 +811,9 @@ mod tests {
                 category: "DELETED FILES",
                 severity: Severity::Warning,
                 confidence: Confidence::Confirmed,
-                why: "1 open file handle points to deleted file".to_string(),
+                observation: "1 open file handle points to deleted file".to_string(),
                 evidence: vec!["Open unlinked descriptors: 1".to_string()],
-                impact: "Disk blocks remain held".to_string(),
+                interpretation: "Disk blocks remain held".to_string(),
                 recommendation: "Restart process to reclaim disk".to_string(),
             }],
             resources: JsonResources {
@@ -840,6 +840,8 @@ mod tests {
         let json = serde_json::to_string_pretty(&report).expect("Serialization failed");
         assert!(json.contains("\"health\": \"warning\""));
         assert!(json.contains("\"confidence\": \"confirmed\""));
+        assert!(json.contains("\"observation\": \"1 open file handle points to deleted file\""));
+        assert!(json.contains("\"interpretation\": \"Disk blocks remain held\""));
         assert!(json.contains("\"name\": \"test-service\""));
         assert!(json.contains("\"binary\": \"/usr/bin/node\""));
     }

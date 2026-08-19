@@ -4,7 +4,7 @@
 
 # procwhy
 
-**What is wrong with this process right now?**
+**Turn raw OS telemetry into actionable process diagnoses.**
 
 <p align="center">
   <img src="https://img.shields.io/badge/Release-v1.0.0-blue" alt="Release">
@@ -16,9 +16,9 @@
   <img src="https://img.shields.io/badge/Language-Rust-orange" alt="Language">
 </p>
 
-`procwhy` is an opinionated process diagnostic CLI designed for incident response. It analyzes low-level process telemetry, open descriptors, socket state, and kernel wait channels to produce evidence-backed diagnostic findings.
+`procwhy` is an opinionated process diagnostic CLI designed for incident response. It interrogates `/proc`, socket tables, and open file descriptors, evaluates heuristic diagnostic rules, and produces an actionable conclusion in **<500ms**.
 
-Instead of dumping tables of raw counters and leaving you to connect the dots during an outage, `procwhy` evaluates diagnostic rules with explicit **confidence levels**, showing verified facts, operational impact, and concrete recommendations.
+Instead of dumping tables of raw counters and leaving you to connect the dots during an incident, `procwhy` evaluates diagnostic rules with explicit **confidence levels**, grounding every inference directly in evidence.
 
 <p align="center">
   <img src="assets/demo.svg" alt="procwhy terminal demo" width="100%">
@@ -26,24 +26,30 @@ Instead of dumping tables of raw counters and leaving you to connect the dots du
 
 ## The Diagnostic Engine
 
-Trust is the product. `procwhy` explicitly separates hard OS observations from diagnostic inferences:
+Trust is the entire product. `procwhy` grounds every finding in a strict 4-part architecture:
 
-- **`[CONFIRMED]`**: Verifiable OS facts (e.g. unlinked file descriptors holding disk space, zombie status, D-state hang).
+1. **Observation**: Something directly measured from the OS.
+2. **Evidence**: Concrete supporting metrics and telemetry triggers.
+3. **Interpretation**: What the evidence probably indicates.
+4. **Recommendation**: Practical next steps for the operator.
+
+Findings are tagged with explicit confidence ratings:
+- **`[CONFIRMED]`**: Verifiable OS state (e.g. unlinked file descriptors holding disk space, zombie status, D-state hang).
 - **`[LIKELY]`**: Strong telemetry inferences (e.g. sustained CPU-bound execution over the sampling window, memory pressure approaching OOM limits).
 - **`[POSSIBLE]`**: Potential operational risks (e.g. listener bound to wildcard `0.0.0.0`, high child worker count).
 
 ```text
 DIAGNOSTICS
   WARN: [DELETED FILES]  [CONFIRMED]
-    Why:            Process holds 5 open descriptor(s) to unlinked/deleted files on disk.
+    Observation:    Process holds 5 open descriptor(s) to unlinked/deleted files on disk.
     Evidence:       Deleted file count: 5 | Sample: /tmp/cache.db (deleted)
-    Impact:         Filesystem space remains allocated and cannot be reclaimed.
-    Recommendation: Restart or signal the process to release deleted file handles.
+    Interpretation: Filesystem space remains allocated and cannot be reclaimed until those descriptors close.
+    Recommendation: Restart or signal the process to release deleted file handles and free disk space.
 
   WARN: [CPU PEGGING]    [LIKELY]
-    Why:            Process remained continuously runnable throughout sampling window.
-    Evidence:       CPU utilization: 97.8% | Scheduler state: Running | wchan: -
-    Impact:         Sustained CPU saturation / possible busy-loop or worker lock contention.
+    Observation:    97.8% CPU utilization over the sampling window.
+    Evidence:       CPU: 97.8% | Scheduler state: Running | wchan: - | Sample duration: 200ms
+    Interpretation: Likely CPU-bound execution (busy-loop or unthrottled computation).
     Recommendation: Capture a stack profile (perf/pstack) to identify the hot code path.
 ```
 
@@ -127,9 +133,9 @@ Use `--json` to integrate `procwhy` into monitoring agents, alerting pipelines, 
       "category": "DELETED FILES",
       "severity": "warning",
       "confidence": "confirmed",
-      "why": "Process holds 1 open descriptor(s) to unlinked/deleted files on disk (e.g. /tmp/cache.db (deleted)).",
+      "observation": "Process holds 1 open descriptor(s) to unlinked/deleted files on disk (e.g. /tmp/cache.db (deleted)).",
       "evidence": ["Deleted file count: 1", "Sample unlinked path: /tmp/cache.db (deleted)"],
-      "impact": "Filesystem space remains allocated and cannot be reclaimed until those descriptors close.",
+      "interpretation": "Filesystem space remains allocated and cannot be reclaimed until those descriptors close.",
       "recommendation": "Restart or signal the process to release deleted file handles and free disk space."
     }
   ]

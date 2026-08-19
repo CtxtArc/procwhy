@@ -50,21 +50,21 @@
     <!-- Diagnostics -->
     <text y="374" class="blue">DIAGNOSTICS</text>
     <text y="394"><tspan class="yellow-bold">  WARN: [DELETED FILES]  </tspan><tspan class="green">[CONFIRMED]</tspan></text>
-    <text y="412">    <tspan class="dim">Why:            </tspan><tspan class="white">Process holds 5 open descriptor(s) to unlinked/deleted files on disk.</tspan></text>
+    <text y="412">    <tspan class="dim">Observation:    </tspan><tspan class="white">Process holds 5 open descriptor(s) to unlinked/deleted files on disk.</tspan></text>
     <text y="430">    <tspan class="dim">Evidence:       </tspan><tspan class="dim">Deleted file count: 5 | Sample: /tmp/cache.db (deleted)</tspan></text>
-    <text y="448">    <tspan class="dim">Impact:         </tspan><tspan class="white">Filesystem space remains allocated and cannot be reclaimed.</tspan></text>
+    <text y="448">    <tspan class="dim">Interpretation: </tspan><tspan class="white">Filesystem space remains allocated and cannot be reclaimed.</tspan></text>
     <text y="466">    <tspan class="dim">Recommendation: </tspan><tspan class="white">Restart or signal the process to release deleted file handles.</tspan></text>
 
     <text y="496"><tspan class="yellow-bold">  WARN: [CPU PEGGING]    </tspan><tspan class="yellow-bold">[LIKELY]</tspan></text>
-    <text y="514">    <tspan class="dim">Why:            </tspan><tspan class="white">Process remained continuously runnable throughout sampling window.</tspan></text>
-    <text y="532">    <tspan class="dim">Evidence:       </tspan><tspan class="dim">CPU utilization: 97.8% | Scheduler state: Running | wchan: -</tspan></text>
-    <text y="550">    <tspan class="dim">Impact:         </tspan><tspan class="white">Sustained CPU saturation / possible busy-loop or worker lock contention.</tspan></text>
+    <text y="514">    <tspan class="dim">Observation:    </tspan><tspan class="white">97.8% CPU utilization over the sampling window.</tspan></text>
+    <text y="532">    <tspan class="dim">Evidence:       </tspan><tspan class="dim">CPU: 97.8% | Scheduler state: Running | wchan: - | Sample duration: 200ms</tspan></text>
+    <text y="550">    <tspan class="dim">Interpretation: </tspan><tspan class="white">Likely CPU-bound execution (busy-loop or unthrottled computation).</tspan></text>
     <text y="568">    <tspan class="dim">Recommendation: </tspan><tspan class="white">Capture a stack profile (perf/pstack) to identify the hot code path.</tspan></text>
 
     <text y="598"><tspan class="yellow-bold">  WARN: [PUBLIC LISTENER]</tspan><tspan class="cyan-bold">  [POSSIBLE]</tspan></text>
-    <text y="616">    <tspan class="dim">Why:            </tspan><tspan class="white">Process is bound to wildcard interface TCP 0.0.0.0:8080.</tspan></text>
+    <text y="616">    <tspan class="dim">Observation:    </tspan><tspan class="white">Process is bound to wildcard interface TCP 0.0.0.0:8080.</tspan></text>
     <text y="634">    <tspan class="dim">Evidence:       </tspan><tspan class="dim">Listener: TCP 0.0.0.0:8080 | Active external connections: 17</tspan></text>
-    <text y="652">    <tspan class="dim">Impact:         </tspan><tspan class="white">Socket accepts incoming traffic from all network interfaces if unfirewalled.</tspan></text>
+    <text y="652">    <tspan class="dim">Interpretation: </tspan><tspan class="white">Socket accepts incoming traffic from all network interfaces if unfirewalled.</tspan></text>
     <text y="670">    <tspan class="dim">Recommendation: </tspan><tspan class="white">Verify whether the service should bind to all interfaces or 127.0.0.1.</tspan></text>
 
     <!-- Summary -->
