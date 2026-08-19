@@ -380,34 +380,73 @@ fn check_external_tcp_connections(snapshot: &ProcessSnapshot, findings: &mut Vec
 }
 
 fn check_deleted_open_files(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
-    let deleted_files: Vec<_> = snapshot
-        .io
-        .open_files
-        .iter()
-        .filter(|f| f.ends_with(" (deleted)") || f.contains(" (deleted)"))
-        .cloned()
-        .collect();
+    let mut deleted_items = snapshot.io.deleted_files.clone();
 
-    if !deleted_files.is_empty() {
-        let count = deleted_files.len();
-        let sample = &deleted_files[0];
+    if deleted_items.is_empty() {
+        for f in &snapshot.io.open_files {
+            if f.ends_with(" (deleted)") || f.contains(" (deleted)") {
+                deleted_items.push(crate::io::DeletedFile {
+                    path: f.clone(),
+                    size_bytes: 0,
+                });
+            }
+        }
+    }
+
+    if !deleted_items.is_empty() {
+        let count = deleted_items.len();
+        let total_bytes: u64 = deleted_items.iter().map(|d| d.size_bytes).sum();
+        let largest = deleted_items.iter().max_by_key(|d| d.size_bytes);
+        let sample_path = &deleted_items[0].path;
+
+        let obs_text = if total_bytes > 0 {
+            format!(
+                "{} deleted file descriptor(s) held open ({} allocated on disk).",
+                count,
+                crate::io::format_bytes(total_bytes)
+            )
+        } else if count == 1 {
+            format!("1 deleted file descriptor held open ({}).", sample_path)
+        } else {
+            format!(
+                "{} deleted file descriptors held open (e.g. {}).",
+                count, sample_path
+            )
+        };
+
+        let mut evidence = vec![format!("{} deleted file descriptors", count)];
+        if total_bytes > 0 {
+            evidence.push(format!(
+                "Total disk space held: {}",
+                crate::io::format_bytes(total_bytes)
+            ));
+        }
+        if let Some(l) = largest {
+            if l.size_bytes > 0 && count > 1 {
+                evidence.push(format!(
+                    "Largest deleted file: {} ({})",
+                    l.path,
+                    crate::io::format_bytes(l.size_bytes)
+                ));
+            } else if l.size_bytes == 0 {
+                evidence.push(format!("Sample unlinked path: {}", sample_path));
+            }
+        } else {
+            evidence.push(format!("Sample unlinked path: {}", sample_path));
+        }
+
         findings.push(Finding {
             category: "DELETED FILES",
             severity: Severity::Warning,
             confidence: Confidence::Confirmed,
-            observation: format!(
-                "Process holds {} open descriptor(s) to unlinked/deleted files on disk (e.g. {}).",
-                count, sample
-            ),
-            evidence: vec![
-                format!("Deleted file count: {}", count),
-                format!("Sample unlinked path: {}", sample),
-            ],
+            observation: obs_text,
+            evidence,
             interpretation: "Filesystem space remains allocated and cannot be reclaimed until those descriptors close.".to_string(),
             recommendation: "Restart or signal the process to release deleted file handles and free disk space.".to_string(),
         });
     }
 }
+
 
 fn check_privileged_ports(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
     let mut priv_ports = Vec::new();
@@ -591,6 +630,7 @@ mod tests {
     fn test_wildcard_listener() {
         let io = ProcessIo {
             open_files: vec![],
+            deleted_files: vec![],
             unix_sockets: vec![],
             network_connections: vec![
                 "TCP 0.0.0.0:8080 (LISTEN)".to_string(),
@@ -616,6 +656,7 @@ mod tests {
         }
         let io = ProcessIo {
             open_files: vec![],
+            deleted_files: vec![],
             unix_sockets: vec![],
             network_connections: conns,
         };
@@ -643,6 +684,10 @@ mod tests {
                 "/var/log/app.log (deleted)".to_string(),
                 "/etc/hosts".to_string(),
             ],
+            deleted_files: vec![crate::io::DeletedFile {
+                path: "/var/log/app.log (deleted)".to_string(),
+                size_bytes: 4 * 1024 * 1024 * 1024, // 4 GB
+            }],
             unix_sockets: vec![],
             network_connections: vec![],
         };
@@ -650,13 +695,16 @@ mod tests {
         let findings = analyze_snapshot(&snapshot);
 
         assert!(findings.iter().any(|f| f.category == "DELETED FILES"));
-        assert_eq!(findings[0].confidence, Confidence::Confirmed);
+        let deleted_finding = findings.iter().find(|f| f.category == "DELETED FILES").unwrap();
+        assert_eq!(deleted_finding.confidence, Confidence::Confirmed);
+        assert!(deleted_finding.evidence.iter().any(|e| e.contains("4.0 GB")));
     }
 
     #[test]
     fn test_privileged_port_detection() {
         let io = ProcessIo {
             open_files: vec![],
+            deleted_files: vec![],
             unix_sockets: vec![],
             network_connections: vec!["TCP 127.0.0.1:80 (LISTEN)".to_string()],
         };
@@ -665,6 +713,7 @@ mod tests {
 
         assert!(findings.iter().any(|f| f.category == "PRIVILEGED PORT"));
     }
+
 
     #[test]
     fn test_redact_sensitive_environment_variables() {
