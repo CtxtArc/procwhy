@@ -41,8 +41,8 @@ Findings are tagged with explicit confidence ratings:
 ```text
 DIAGNOSTICS
   WARN: [DELETED FILES]  [CONFIRMED]
-    Observation:    Process holds 5 open descriptor(s) to unlinked/deleted files on disk.
-    Evidence:       Deleted file count: 5 | Sample: /tmp/cache.db (deleted)
+    Observation:    5 deleted file descriptor(s) held open (4.2 GB allocated on disk).
+    Evidence:       5 deleted file descriptors | Total disk space held: 4.2 GB | Largest: /var/log/app.log (4.2 GB)
     Interpretation: Filesystem space remains allocated and cannot be reclaimed until those descriptors close.
     Recommendation: Restart or signal the process to release deleted file handles and free disk space.
 
@@ -55,7 +55,7 @@ DIAGNOSTICS
 
 ## Supported Diagnostic Rules
 
-- **Deleted File Leaks `[CONFIRMED]`**: Detects unlinked files still held open by descriptors that prevent the filesystem from freeing disk blocks.
+- **Deleted File Leaks `[CONFIRMED]`**: Detects unlinked files still held open by descriptors, measuring exact bytes allocated on disk that cannot be freed.
 - **Uninterruptible D-State Hangs `[CONFIRMED]`**: Identifies kernel wait channels (`wchan`) when a process is blocked in storage I/O and cannot receive signals (including `kill -9`).
 - **Zombie / Defunct Processes `[CONFIRMED]`**: Identifies terminated child processes whose parent has not called `waitpid()` to reap them.
 - **CPU Pegging `[LIKELY]`**: Differentiates between sustained CPU-bound execution (>90% CPU) and idle lock waits.
@@ -103,9 +103,9 @@ procwhy --no-pager 1234
 $ procwhy --benchmark
 Running procwhy latency benchmark...
 
-Cold startup: 84.6ms
-Warm (p50):   13.3ms
-Warm (p95):   16.0ms
+Cold startup: 63.6ms
+Warm (p50):   14.2ms
+Warm (p95):   20.9ms
 
 Verdict: Well within the <500ms incident latency budget.
 ```
@@ -133,8 +133,12 @@ Use `--json` to integrate `procwhy` into monitoring agents, alerting pipelines, 
       "category": "DELETED FILES",
       "severity": "warning",
       "confidence": "confirmed",
-      "observation": "Process holds 1 open descriptor(s) to unlinked/deleted files on disk (e.g. /tmp/cache.db (deleted)).",
-      "evidence": ["Deleted file count: 1", "Sample unlinked path: /tmp/cache.db (deleted)"],
+      "observation": "5 deleted file descriptor(s) held open (4.2 GB allocated on disk).",
+      "evidence": [
+        "5 deleted file descriptors",
+        "Total disk space held: 4.2 GB",
+        "Largest deleted file: /var/log/app.log (4.2 GB)"
+      ],
       "interpretation": "Filesystem space remains allocated and cannot be reclaimed until those descriptors close.",
       "recommendation": "Restart or signal the process to release deleted file handles and free disk space."
     }
