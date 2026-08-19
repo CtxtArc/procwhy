@@ -1,0 +1,20 @@
+[package]
+name = "procwhy"
+version = "1.0.0"
+edition = "2024"
+description = "Lightweight diagnostic process inspector for Linux and macOS"
+
+authors = ["CtxtArc"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/CtxtArc/procwhy"
+homepage = "https://github.com/CtxtArc/procwhy"
+keywords = ["process", "diagnostic", "proc", "lsof", "cli"]
+categories = ["command-line-utilities", "development-tools::profiling"]
+
+[dependencies]
+sysinfo = "0.30"
+clap = { version = "4.4", features = ["derive"] }
+colored = "2.1"
+anyhow = "1.0"
+procfs = "0.16"
