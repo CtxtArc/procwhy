@@ -10,14 +10,15 @@
   <img src="https://img.shields.io/badge/Release-v1.0.0-blue" alt="Release">
   <img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status">
   <img src="https://img.shields.io/badge/Tests-29_passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/Latency-13ms_warm-brightgreen" alt="Latency">
   <img src="https://img.shields.io/badge/License-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/Platform-Linux_%7C_macOS-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/Language-Rust-orange" alt="Language">
 </p>
 
-`procwhy` is an opinionated process diagnostic CLI that turns low-level process telemetry, open descriptors, socket state, and kernel wait channels into clear, structured findings.
+`procwhy` is an opinionated process diagnostic CLI designed for incident response. It analyzes low-level process telemetry, open descriptors, socket state, and kernel wait channels to produce evidence-backed diagnostic findings.
 
-Instead of dumping tables of raw numbers and leaving you to connect the dots during an incident, `procwhy` evaluates diagnostic rules with explicit **confidence levels**, distinguishing between hard OS facts and inferences.
+Instead of dumping tables of raw counters and leaving you to connect the dots during an outage, `procwhy` evaluates diagnostic rules with explicit **confidence levels**, showing verified facts, operational impact, and concrete recommendations.
 
 <p align="center">
   <img src="assets/demo.svg" alt="procwhy terminal demo" width="100%">
@@ -25,43 +26,38 @@ Instead of dumping tables of raw numbers and leaving you to connect the dots dur
 
 ## The Diagnostic Engine
 
-Trust is the product. `procwhy` explicitly separates hard OS facts from diagnostic inferences:
+Trust is the product. `procwhy` explicitly separates hard OS observations from diagnostic inferences:
 
-- **`[CONFIRMED]`**: Verifiable OS state (e.g. unlinked file descriptors holding disk space, zombie status, D-state hang).
-- **`[LIKELY]`**: Strong telemetry inferences (e.g. sustained CPU busy loop over sampling window, memory pressure approaching OOM killer limits).
-- **`[POSSIBLE]`**: Potential operational risks (e.g. listener bound to wildcard `0.0.0.0`, high child process count).
+- **`[CONFIRMED]`**: Verifiable OS facts (e.g. unlinked file descriptors holding disk space, zombie status, D-state hang).
+- **`[LIKELY]`**: Strong telemetry inferences (e.g. sustained CPU-bound execution over the sampling window, memory pressure approaching OOM limits).
+- **`[POSSIBLE]`**: Potential operational risks (e.g. listener bound to wildcard `0.0.0.0`, high child worker count).
 
 ```text
 DIAGNOSTICS
   WARN: [DELETED FILES]  [CONFIRMED]
-    Observed:    Process holds 5 open file handle(s) to unlinked/deleted files on disk.
-    Inference:   Disk space will not be freed by the filesystem until descriptors close.
-    Action:      Restart or signal the process to release deleted file handles and free disk space.
+    Why:            Process holds 5 open descriptor(s) to unlinked/deleted files on disk.
+    Evidence:       Deleted file count: 5 | Sample: /tmp/cache.db (deleted)
+    Impact:         Filesystem space remains allocated and cannot be reclaimed.
+    Recommendation: Restart or signal the process to release deleted file handles.
 
-  WARN: [CPU PEGGING]  [LIKELY]
-    Observed:    Process is consuming 96.8% CPU over the sampling window.
-    Inference:   Sustained CPU-bound execution (busy loop or compute-heavy task).
-    Action:      Profile active threads with perf/pstack before terminating.
-```
-
-### Deep Explanations (`--explain`)
-
-Run with `--explain` (`-e`) for detailed kernel mechanics, evidence metrics, and investigation steps:
-
-```bash
-procwhy --explain 4812
+  WARN: [CPU PEGGING]    [LIKELY]
+    Why:            Process remained continuously runnable throughout sampling window.
+    Evidence:       CPU utilization: 97.8% | Scheduler state: Running | wchan: -
+    Impact:         Sustained CPU saturation / possible busy-loop or worker lock contention.
+    Recommendation: Capture a stack profile (perf/pstack) to identify the hot code path.
 ```
 
 ## Supported Diagnostic Rules
 
 - **Deleted File Leaks `[CONFIRMED]`**: Detects unlinked files still held open by descriptors that prevent the filesystem from freeing disk blocks.
-- **Uninterruptible D-State Hangs `[CONFIRMED]`**: Identifies kernel wait channels (`wchan`) when a process is blocked in storage I/O and cannot be killed by signals.
+- **Uninterruptible D-State Hangs `[CONFIRMED]`**: Identifies kernel wait channels (`wchan`) when a process is blocked in storage I/O and cannot receive signals (including `kill -9`).
 - **Zombie / Defunct Processes `[CONFIRMED]`**: Identifies terminated child processes whose parent has not called `waitpid()` to reap them.
 - **CPU Pegging `[LIKELY]`**: Differentiates between sustained CPU-bound execution (>90% CPU) and idle lock waits.
 - **OOM Killer Risk `[LIKELY]`**: Calculates RSS consumption against host RAM and warns before the Linux OOM-killer intervenes.
 - **Disk Thrashing `[LIKELY]`**: Computes real-time I/O delta throughput (>20 MB/s) to catch runaway logging or swap activity.
 - **Public Wildcard Binds `[POSSIBLE]`**: Flags services listening on `0.0.0.0` or `[::]` exposed to external networks.
 - **Connection Spikes `[POSSIBLE]`**: Monitors active external TCP connections and connection pool exhaustion.
+- **Privileged Ports `[CONFIRMED]`**: Flags processes bound to reserved system ports (<1024).
 - **Credential Masking**: Automatically masks API tokens, bearer keys, and database passwords in environment variables.
 
 ## Usage
@@ -78,9 +74,8 @@ procwhy --port 3000
 procwhy node
 procwhy firefox
 
-# Deep explanation mode with evidence and kernel mechanics
-procwhy --explain 1234
-procwhy -e :8080
+# Run latency benchmark
+procwhy --benchmark
 
 # Output structured JSON for automation or jq
 procwhy --json :8080
@@ -92,6 +87,21 @@ procwhy --all node
 
 # Disable automatic pager
 procwhy --no-pager 1234
+```
+
+### Incident Benchmark
+
+`procwhy` is built to be fast enough to use interactively during active incidents:
+
+```bash
+$ procwhy --benchmark
+Running procwhy latency benchmark...
+
+Cold startup: 84.6ms
+Warm (p50):   13.3ms
+Warm (p95):   16.0ms
+
+Verdict: Well within the <500ms incident latency budget.
 ```
 
 ### JSON Automation
@@ -114,13 +124,13 @@ Use `--json` to integrate `procwhy` into monitoring agents, alerting pipelines, 
   },
   "diagnostics": [
     {
+      "category": "DELETED FILES",
       "severity": "warning",
       "confidence": "confirmed",
-      "category": "DELETED FILES",
-      "observed": "Process holds 1 open file handle(s) to unlinked/deleted files (/tmp/cache.db (deleted)).",
-      "inference": "Disk space will not be freed by the filesystem until descriptors close.",
-      "recommendation": "Restart or signal the process to release deleted file handles and free disk space.",
-      "evidence": ["Open deleted file count: 1", "Sample path: /tmp/cache.db (deleted)"]
+      "why": "Process holds 1 open descriptor(s) to unlinked/deleted files on disk (e.g. /tmp/cache.db (deleted)).",
+      "evidence": ["Deleted file count: 1", "Sample unlinked path: /tmp/cache.db (deleted)"],
+      "impact": "Filesystem space remains allocated and cannot be reclaimed until those descriptors close.",
+      "recommendation": "Restart or signal the process to release deleted file handles and free disk space."
     }
   ]
 }

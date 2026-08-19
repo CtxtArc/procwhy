@@ -43,14 +43,13 @@ impl Health {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Finding {
+    pub category: &'static str,
     pub severity: Severity,
     pub confidence: Confidence,
-    pub category: &'static str,
-    pub observed: String,
-    pub inference: String,
-    pub recommendation: String,
+    pub why: String,
     pub evidence: Vec<String>,
-    pub explanation: Option<String>,
+    pub impact: String,
+    pub recommendation: String,
 }
 
 pub fn generate_summary(findings: &[Finding]) -> String {
@@ -62,7 +61,7 @@ pub fn generate_summary(findings: &[Finding]) -> String {
     for f in findings {
         match f.category {
             "D-STATE HANG" => highlights.push("stuck in uninterruptible kernel sleep (D-state)"),
-            "CRITICAL RAM" => highlights.push("consuming critical memory (high OOM risk)"),
+            "OOM KILLER RISK" => highlights.push("consuming critical memory (high OOM risk)"),
             "HIGH RAM" => highlights.push("consuming significant system RAM"),
             "CPU PEGGING" => highlights.push("consuming unusually high CPU"),
             "HIGH DISK I/O" => highlights.push("generating heavy disk throughput"),
@@ -133,35 +132,33 @@ fn check_wchan_and_state(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>
     if is_d_state {
         let wchan_info = snapshot.wchan.unwrap_or("disk/driver I/O");
         findings.push(Finding {
+            category: "D-STATE HANG",
             severity: Severity::Critical,
             confidence: Confidence::Confirmed,
-            category: "D-STATE HANG",
-            observed: format!(
+            why: format!(
                 "Process is stuck in Uninterruptible Sleep (D-state) on kernel wait channel '{}'.",
                 wchan_info
             ),
-            inference: "The process is blocked inside a kernel driver/storage operation. Signals (including SIGKILL / kill -9) are deferred until the kernel I/O request finishes.".to_string(),
-            recommendation: "Inspect storage subsystem, slow/hanging NFS mounts, or kernel dmesg logs for driver timeouts.".to_string(),
             evidence: vec![
-                "Process state: Uninterruptible Sleep (D)".to_string(),
-                format!("Kernel wait channel: {}", wchan_info),
+                "Scheduler state: TASK_UNINTERRUPTIBLE (D)".to_string(),
+                format!("Kernel wait channel (wchan): {}", wchan_info),
             ],
-            explanation: Some("D-state (TASK_UNINTERRUPTIBLE) is used when a task is waiting on hardware or filesystem I/O that cannot be safely aborted without risking corruption.".to_string()),
+            impact: "Process is blocked in a driver/storage call. Signals (including SIGKILL / kill -9) are ignored by the kernel until I/O unblocks.".to_string(),
+            recommendation: "Inspect storage subsystem, slow/hanging NFS mounts, or kernel dmesg logs for driver/hardware timeouts.".to_string(),
         });
     } else if let Some(wchan) = snapshot.wchan {
         if wchan.contains("futex") && snapshot.cpu_usage == 0.0 {
             findings.push(Finding {
+                category: "LOCK CONTENTION",
                 severity: Severity::Info,
                 confidence: Confidence::Likely,
-                category: "LOCK CONTENTION",
-                observed: format!("Threads are sleeping in kernel wait channel '{}' with 0% CPU.", wchan),
-                inference: "Process threads are blocked on a user-space synchronization primitive (e.g. pthread mutex / futex lock).".to_string(),
-                recommendation: "If the process is unresponsive, inspect thread stacks for deadlocks or lock starvation.".to_string(),
+                why: format!("Threads are sleeping in kernel wait channel '{}' with 0% CPU.", wchan),
                 evidence: vec![
                     format!("Kernel wait channel: {}", wchan),
                     "CPU utilization: 0.0%".to_string(),
                 ],
-                explanation: Some("A futex wait indicates threads are waiting for another thread to release a lock or signal a condition variable.".to_string()),
+                impact: "Process threads are blocked on a user-space synchronization primitive (e.g. pthread mutex / futex lock).".to_string(),
+                recommendation: "If the process is unresponsive, inspect thread stacks for deadlocks or lock starvation.".to_string(),
             });
         }
     }
@@ -178,20 +175,19 @@ fn check_disk_io_rate(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
             let write_mb_s = rate.write_bytes_per_sec / (1024.0 * 1024.0);
 
             findings.push(Finding {
+                category: "HIGH DISK I/O",
                 severity: Severity::Warning,
                 confidence: Confidence::Likely,
-                category: "HIGH DISK I/O",
-                observed: format!(
+                why: format!(
                     "High disk throughput: {:.1} MB/s ({:.1} MB/s read, {:.1} MB/s write).",
                     total_mb_s, read_mb_s, write_mb_s
                 ),
-                inference: "Heavy disk read/write bandwidth that may saturate I/O queues or degrade overall system responsiveness.".to_string(),
-                recommendation: "Check for unbuffered file logging, large core dumps, or swap thrashing.".to_string(),
                 evidence: vec![
-                    format!("Read rate: {:.1} MB/s", read_mb_s),
-                    format!("Write rate: {:.1} MB/s", write_mb_s),
+                    format!("Read throughput: {:.1} MB/s", read_mb_s),
+                    format!("Write throughput: {:.1} MB/s", write_mb_s),
                 ],
-                explanation: Some("High disk I/O measured as delta over 200ms window from /proc/[pid]/io.".to_string()),
+                impact: "Heavy disk read/write bandwidth that may saturate storage queues and degrade overall system responsiveness.".to_string(),
+                recommendation: "Check for unbuffered file logging, large core dumps, or swap thrashing.".to_string(),
             });
         }
     }
@@ -200,17 +196,16 @@ fn check_disk_io_rate(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
 fn check_child_processes(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
     if snapshot.children_count >= 50 {
         findings.push(Finding {
+            category: "HIGH CHILD COUNT",
             severity: Severity::Warning,
             confidence: Confidence::Likely,
-            category: "HIGH CHILD COUNT",
-            observed: format!(
+            why: format!(
                 "Process has spawned {} active child processes/workers (PID {}).",
                 snapshot.children_count, snapshot.pid
             ),
-            inference: "Elevated worker or sub-process count that may increase context switching and process table load.".to_string(),
-            recommendation: "Ensure child processes are reaped to avoid process table exhaustion.".to_string(),
             evidence: vec![format!("Direct child process count: {}", snapshot.children_count)],
-            explanation: Some("Process hierarchy was traversed to identify all active child processes whose parent PID matches this process.".to_string()),
+            impact: "Elevated worker or sub-process count that increases context switching and process table load.".to_string(),
+            recommendation: "Ensure child processes are properly reaped and pooled to avoid process table exhaustion.".to_string(),
         });
     }
 }
@@ -226,20 +221,19 @@ fn check_zombie_state(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
             None => "unknown parent".to_string(),
         };
         findings.push(Finding {
+            category: "ZOMBIE PROCESS",
             severity: Severity::Critical,
             confidence: Confidence::Confirmed,
-            category: "ZOMBIE PROCESS",
-            observed: format!(
-                "Defunct process. It has terminated but {} has not collected its exit code via waitpid().",
+            why: format!(
+                "Defunct process. It has terminated but {} has not collected its exit status via waitpid().",
                 parent_info
             ),
-            inference: "The process entry remains allocated in the kernel process table until reaped by its parent.".to_string(),
-            recommendation: format!("Signal {} or restart the parent to reap terminated child processes.", parent_info),
             evidence: vec![
                 format!("Status: {:?}", snapshot.status),
                 format!("Parent: {}", parent_info),
             ],
-            explanation: Some("When a process exits, its descriptor remains in the OS table as a zombie until the parent reads its exit status with wait() / waitpid().".to_string()),
+            impact: "The process entry remains allocated in the kernel process table until reaped by its parent.".to_string(),
+            recommendation: format!("Signal {} or restart the parent to reap terminated child processes.", parent_info),
         });
     }
 }
@@ -256,37 +250,35 @@ fn check_memory_usage(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
 
     if mem_pct >= 50.0 {
         findings.push(Finding {
+            category: "OOM KILLER RISK",
             severity: Severity::Critical,
             confidence: Confidence::Likely,
-            category: "OOM KILLER RISK",
-            observed: format!(
-                "Consuming {:.1} MB ({:.1}% of {:.1} GB system RAM).",
+            why: format!(
+                "Resident memory is {:.1} MB ({:.1}% of {:.1} GB system RAM).",
                 mem_mb, mem_pct, total_gb
             ),
-            inference: "High probability of Linux kernel OOM-killer termination under system memory pressure.".to_string(),
-            recommendation: "Check for memory leaks or configure container memory limits.".to_string(),
             evidence: vec![
-                format!("Resident memory: {:.1} MB", mem_mb),
-                format!("System memory share: {:.1}%", mem_pct),
+                format!("Resident memory (RSS): {:.1} MB", mem_mb),
+                format!("Host RAM share: {:.1}%", mem_pct),
             ],
-            explanation: Some("When system memory is exhausted, the Linux Out-Of-Memory (OOM) killer selects high-memory processes to terminate with SIGKILL.".to_string()),
+            impact: "High probability of Linux kernel OOM-killer termination under system memory pressure.".to_string(),
+            recommendation: "Inspect memory growth profile, heap allocations, or configure container memory limits.".to_string(),
         });
     } else if mem_pct >= 20.0 {
         findings.push(Finding {
+            category: "HIGH RAM",
             severity: Severity::Warning,
             confidence: Confidence::Likely,
-            category: "HIGH RAM",
-            observed: format!(
+            why: format!(
                 "Process consumes {:.1} MB ({:.1}% of {:.1} GB system RAM).",
                 mem_mb, mem_pct, total_gb
             ),
-            inference: "Substantial resident memory footprint relative to total available host RAM.".to_string(),
-            recommendation: "Verify memory growth profile or configure cgroup memory limits.".to_string(),
             evidence: vec![
-                format!("Resident memory: {:.1} MB", mem_mb),
-                format!("System memory share: {:.1}%", mem_pct),
+                format!("Resident memory (RSS): {:.1} MB", mem_mb),
+                format!("Host RAM share: {:.1}%", mem_pct),
             ],
-            explanation: Some("Resident Set Size (RSS) represents physical memory currently mapped to the process address space.".to_string()),
+            impact: "Substantial physical memory allocation relative to total available system RAM.".to_string(),
+            recommendation: "Verify memory growth profile or configure cgroup memory limits.".to_string(),
         });
     }
 }
@@ -294,20 +286,17 @@ fn check_memory_usage(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
 fn check_cpu_usage(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
     if snapshot.cpu_usage >= 90.0 {
         findings.push(Finding {
+            category: "CPU PEGGING",
             severity: Severity::Warning,
             confidence: Confidence::Likely,
-            category: "CPU PEGGING",
-            observed: format!(
-                "Process is consuming {:.1}% CPU over the sampling window.",
-                snapshot.cpu_usage
-            ),
-            inference: "Sustained CPU-bound execution (tight loop or heavy compute workload).".to_string(),
-            recommendation: "Profile active threads with perf/pstack before terminating to capture call stacks.".to_string(),
+            why: "Process remained continuously runnable throughout the sampling window.".to_string(),
             evidence: vec![
-                format!("Sampled CPU: {:.1}%", snapshot.cpu_usage),
+                format!("CPU utilization: {:.1}%", snapshot.cpu_usage),
                 format!("Scheduler state: {:?}", snapshot.status),
+                format!("Kernel wait channel: {}", snapshot.wchan.unwrap_or("-")),
             ],
-            explanation: Some("High CPU utilization in state 'Running' without I/O wait indicates thread execution in user or kernel space.".to_string()),
+            impact: "Sustained CPU saturation / possible busy-loop or compute-heavy task.".to_string(),
+            recommendation: "Capture a stack profile (e.g. perf top / pstack) before terminating to identify the hot code path.".to_string(),
         });
     }
 }
@@ -335,23 +324,22 @@ fn check_wildcard_binds(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>)
         let count = wildcard_listeners.len();
         let sample = wildcard_listeners[0].clone();
         let desc = if count == 1 {
-            format!("Publicly listening on wildcard interface: {}", sample)
+            format!("Process is bound to wildcard interface: {}", sample)
         } else {
             format!(
-                "Publicly listening on {} wildcard interfaces ({})",
+                "Process is bound to {} wildcard interfaces ({})",
                 count, sample
             )
         };
 
         findings.push(Finding {
+            category: "PUBLIC LISTENER",
             severity: Severity::Warning,
             confidence: Confidence::Possible,
-            category: "PUBLIC LISTENER",
-            observed: desc,
-            inference: "The socket is exposed to all network interfaces on the host (including public/external networks if unfirewalled).".to_string(),
-            recommendation: "Bind to 127.0.0.1 or a specific interface if public external access is unintended.".to_string(),
+            why: desc,
             evidence: vec![format!("Listener bind: {}", sample)],
-            explanation: Some("Binding to INADDR_ANY (0.0.0.0) or IN6ADDR_ANY ([::]) accepts incoming traffic on every host network interface.".to_string()),
+            impact: "Socket accepts incoming traffic from all network interfaces on the host if unfirewalled.".to_string(),
+            recommendation: "Verify whether the service should bind to all interfaces or 127.0.0.1.".to_string(),
         });
     }
 }
@@ -373,17 +361,16 @@ fn check_external_tcp_connections(snapshot: &ProcessSnapshot, findings: &mut Vec
 
     if external_count > 10 {
         findings.push(Finding {
+            category: "HIGH TCP CONNS",
             severity: Severity::Warning,
             confidence: Confidence::Possible,
-            category: "HIGH TCP CONNS",
-            observed: format!(
+            why: format!(
                 "Process has {} active external TCP connections (threshold: 10).",
                 external_count
             ),
-            inference: "Elevated outbound or inbound external network traffic, or potential connection pool exhaustion.".to_string(),
-            recommendation: "Check for connection pool leaks, unclosed HTTP clients, or high external traffic.".to_string(),
-            evidence: vec![format!("Active external connections: {}", external_count)],
-            explanation: Some("Connections to non-loopback IPs in ESTABLISHED state parsed from socket tables.".to_string()),
+            evidence: vec![format!("External connection count: {}", external_count)],
+            impact: "Elevated outbound or inbound network traffic, or potential connection pool exhaustion.".to_string(),
+            recommendation: "Check connection pool limits, HTTP keep-alive settings, or upstream service latency.".to_string(),
         });
     }
 }
@@ -401,20 +388,19 @@ fn check_deleted_open_files(snapshot: &ProcessSnapshot, findings: &mut Vec<Findi
         let count = deleted_files.len();
         let sample = &deleted_files[0];
         findings.push(Finding {
+            category: "DELETED FILES",
             severity: Severity::Warning,
             confidence: Confidence::Confirmed,
-            category: "DELETED FILES",
-            observed: format!(
-                "Process holds {} open file handle(s) to unlinked/deleted files on disk (e.g. {}).",
+            why: format!(
+                "Process holds {} open descriptor(s) to unlinked/deleted files on disk (e.g. {}).",
                 count, sample
             ),
-            inference: "Disk space will not be freed by the filesystem until the process closes the descriptors or terminates.".to_string(),
-            recommendation: "Restart or signal the process to release deleted file handles and reclaim disk space.".to_string(),
             evidence: vec![
-                format!("Open deleted file count: {}", count),
+                format!("Deleted file count: {}", count),
                 format!("Sample unlinked path: {}", sample),
             ],
-            explanation: Some("When a file is unlinked while open, its directory entry is removed but inode data blocks remain allocated until the last descriptor closes.".to_string()),
+            impact: "Filesystem space remains allocated and cannot be reclaimed until those descriptors close.".to_string(),
+            recommendation: "Restart or signal the process to release deleted file handles and free disk space.".to_string(),
         });
     }
 }
@@ -435,14 +421,13 @@ fn check_privileged_ports(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding
     if !priv_ports.is_empty() {
         let sample = &priv_ports[0];
         findings.push(Finding {
+            category: "PRIVILEGED PORT",
             severity: Severity::Info,
             confidence: Confidence::Confirmed,
-            category: "PRIVILEGED PORT",
-            observed: format!("Bound to privileged system port {} ({}).", sample.0, sample.1),
-            inference: "Process required CAP_NET_BIND_SERVICE or root privileges at bind time.".to_string(),
-            recommendation: "Ensure least-privilege principles are followed if running as a non-root service.".to_string(),
+            why: format!("Bound to privileged system port {} ({}).", sample.0, sample.1),
             evidence: vec![format!("Privileged port: {}", sample.0)],
-            explanation: Some("Ports below 1024 are reserved by POSIX systems and require elevated capabilities to bind.".to_string()),
+            impact: "Required CAP_NET_BIND_SERVICE or superuser capabilities at bind time.".to_string(),
+            recommendation: "Ensure least-privilege principles are followed if running as a non-root service.".to_string(),
         });
     }
 }
@@ -454,20 +439,19 @@ fn check_high_fd_count(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) 
 
     if total_fds >= 100 {
         findings.push(Finding {
+            category: "HIGH FD COUNT",
             severity: Severity::Info,
             confidence: Confidence::Confirmed,
-            category: "HIGH FD COUNT",
-            observed: format!(
+            why: format!(
                 "Process has {} open file descriptors and sockets.",
                 total_fds
             ),
-            inference: "Elevated file descriptor usage relative to default process expectations.".to_string(),
-            recommendation: "Check file descriptor limits (ulimit -n) to prevent EMFILE errors.".to_string(),
             evidence: vec![
                 format!("Open files: {}", snapshot.io.open_files.len()),
                 format!("Sockets: {}", snapshot.io.unix_sockets.len() + snapshot.io.network_connections.len()),
             ],
-            explanation: Some("Aggregated from /proc/[pid]/fd or lsof output.".to_string()),
+            impact: "Elevated descriptor usage approaching default process ulimit thresholds.".to_string(),
+            recommendation: "Check file descriptor limits (ulimit -n) to prevent EMFILE exhaustion.".to_string(),
         });
     }
 }
@@ -517,7 +501,6 @@ pub fn redact_env_var(env_str: &str) -> String {
 
     env_str.to_string()
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -693,7 +676,6 @@ mod tests {
             redact_env_var("SERVICE_ENDPOINT=http://admin:secret123@api.internal:8080/v1"),
             "SERVICE_ENDPOINT=http://admin:***@api.internal:8080/v1"
         );
-
         assert_eq!(
             redact_env_var("OPENAI_API_KEY=sk-proj-1234567890"),
             "OPENAI_API_KEY=sk-*** [REDACTED]"
@@ -709,49 +691,45 @@ mod tests {
         assert_eq!(Health::from_findings(&[]), Health::Ok);
 
         let info_finding = vec![Finding {
+            category: "LOCK CONTENTION",
             severity: Severity::Info,
             confidence: Confidence::Confirmed,
-            category: "LOCK CONTENTION",
-            observed: "Waiting on futex".to_string(),
-            inference: "Thread lock wait".to_string(),
-            recommendation: "Inspect deadlock".to_string(),
+            why: "Waiting on futex".to_string(),
             evidence: vec![],
-            explanation: None,
+            impact: "Thread lock wait".to_string(),
+            recommendation: "Inspect deadlock".to_string(),
         }];
         assert_eq!(Health::from_findings(&info_finding), Health::Info);
 
         let warn_finding = vec![Finding {
+            category: "CPU PEGGING",
             severity: Severity::Warning,
             confidence: Confidence::Likely,
-            category: "CPU PEGGING",
-            observed: "CPU 95%".to_string(),
-            inference: "Busy loop".to_string(),
-            recommendation: "Profile stack".to_string(),
+            why: "CPU 95%".to_string(),
             evidence: vec![],
-            explanation: None,
+            impact: "Busy loop".to_string(),
+            recommendation: "Profile stack".to_string(),
         }];
         assert_eq!(Health::from_findings(&warn_finding), Health::Warning);
 
         let critical_finding = vec![
             Finding {
+                category: "CPU PEGGING",
                 severity: Severity::Warning,
                 confidence: Confidence::Likely,
-                category: "CPU PEGGING",
-                observed: "CPU 95%".to_string(),
-                inference: "Busy loop".to_string(),
-                recommendation: "Profile stack".to_string(),
+                why: "CPU 95%".to_string(),
                 evidence: vec![],
-                explanation: None,
+                impact: "Busy loop".to_string(),
+                recommendation: "Profile stack".to_string(),
             },
             Finding {
+                category: "D-STATE HANG",
                 severity: Severity::Critical,
                 confidence: Confidence::Confirmed,
-                category: "D-STATE HANG",
-                observed: "Stuck in D-state".to_string(),
-                inference: "Kernel I/O hang".to_string(),
-                recommendation: "Check storage".to_string(),
+                why: "Stuck in D-state".to_string(),
                 evidence: vec![],
-                explanation: None,
+                impact: "Kernel I/O hang".to_string(),
+                recommendation: "Check storage".to_string(),
             },
         ];
         assert_eq!(Health::from_findings(&critical_finding), Health::Critical);
@@ -765,14 +743,13 @@ mod tests {
         );
 
         let one_finding = vec![Finding {
+            category: "DELETED FILES",
             severity: Severity::Warning,
             confidence: Confidence::Confirmed,
-            category: "DELETED FILES",
-            observed: "Deleted files held".to_string(),
-            inference: "Blocks held".to_string(),
-            recommendation: "Restart".to_string(),
+            why: "Deleted files held".to_string(),
             evidence: vec![],
-            explanation: None,
+            impact: "Blocks held".to_string(),
+            recommendation: "Restart".to_string(),
         }];
         assert_eq!(
             generate_summary(&one_finding),
@@ -781,24 +758,22 @@ mod tests {
 
         let two_findings = vec![
             Finding {
+                category: "CPU PEGGING",
                 severity: Severity::Warning,
                 confidence: Confidence::Likely,
-                category: "CPU PEGGING",
-                observed: "CPU 95%".to_string(),
-                inference: "Busy loop".to_string(),
-                recommendation: "Profile stack".to_string(),
+                why: "CPU 95%".to_string(),
                 evidence: vec![],
-                explanation: None,
+                impact: "Busy loop".to_string(),
+                recommendation: "Profile stack".to_string(),
             },
             Finding {
+                category: "DELETED FILES",
                 severity: Severity::Warning,
                 confidence: Confidence::Confirmed,
-                category: "DELETED FILES",
-                observed: "Deleted files held".to_string(),
-                inference: "Blocks held".to_string(),
-                recommendation: "Restart".to_string(),
+                why: "Deleted files held".to_string(),
                 evidence: vec![],
-                explanation: None,
+                impact: "Blocks held".to_string(),
+                recommendation: "Restart".to_string(),
             },
         ];
         assert_eq!(
