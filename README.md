@@ -1,57 +1,21 @@
 # procwhy
 
-A lightweight diagnostic process inspector for Linux and macOS.
+**A lightweight diagnostic process inspector for Linux and macOS.**
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Version-v1.0.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/Status-Production_Ready-success" alt="Status">
+  <img src="https://img.shields.io/badge/Tests-19_passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/License-MIT_OR_Apache_2.0-blue" alt="License">
+  <img src="https://img.shields.io/badge/Platform-Linux_%7C_macOS-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/Language-Rust-orange" alt="Language">
+</p>
 
 `procwhy` combines process telemetry, socket state, open file descriptors, and rule-based diagnostics into a single formatted snapshot in under 500 milliseconds.
 
-```text
-$ procwhy 545719
-
-PID 545719  firefox
-
-VERDICT
-  WARN: [DELETED FILES] 5 open file handles point to deleted files (e.g. /home/user/.cache/app.log (deleted)). Disk space remains held until closed.
-    Hint: Restart the process to release deleted file handles and free disk space.
-  WARN: [HIGH CHILD COUNT] Process (PID 545719) has spawned 127 child processes.
-    Hint: Ensure child processes are reaped to avoid process table exhaustion.
-  INFO: [HIGH FD COUNT] Process has 115 open file descriptors and sockets.
-
-STATS
-  CPU        0.0%
-  Memory     1236.3 MB (5.3% of 23.0 GB)
-  Disk I/O   0 B/s
-  Status     Sleep
-  Wait Chan  poll_schedule_timeout.constprop.0
-
-ENVIRONMENT (Top 5)
-  PATH=/usr/local/bin:/usr/bin:...
-  ...and 45 more
-
-CHILDREN (Top 5)
-  └─ Socket Thread 545741
-  └─ Compositor 545794
-  └─ Renderer 545780
-  └─ TaskController 545763
-  └─ IPC I/O Parent 545738
-  ...and 122 more
-
-NETWORK
-  → TCP 192.168.1.83:53736 -> 34.107.243.93:443 (ESTABLISHED)
-  → TCP [2a0d:3341:...]:43816 -> [2606:4700:...]:443 (ESTABLISHED)
-  → UDP [::]:43319
-
-UNIX SOCKETS (Top 5)
-  → /run/user/1000/wayland-proxy-545719
-  → [unnamed SEQPACKET socket (inode 1004626)]
-  → [unnamed SEQPACKET socket (inode 1056766)]
-  ...and 42 more
-
-FILES (Top 5)
-  /dev/dri/renderD128
-  /dev/null
-  /dev/tty1
-  ...and 57 more
-```
+<p align="center">
+  <img src="assets/demo.svg" alt="procwhy terminal demo" width="100%">
+</p>
 
 ## Features
 
@@ -76,19 +40,23 @@ FILES (Top 5)
 
 ## Installation
 
-### Via Cargo
+### Build from Source
+
 ```bash
-cargo install procwhy
+# Clone the repository
+git clone https://github.com/CtxtArc/procwhy.git
+cd procwhy
+
+# Install the binary locally
+cargo install --path .
 ```
 
-### Via Homebrew
+Or build the release binary:
 ```bash
-brew tap CtxtArc/procwhy
-brew install procwhy
+cargo build --release
+# Binary available at target/release/procwhy
 ```
 
-### Pre-built Binaries
-Pre-built binaries for Linux (x86_64, aarch64) and macOS (x86_64, Apple Silicon arm64) are available on [GitHub Releases](https://github.com/CtxtArc/procwhy/releases).
 
 ## Usage
 
@@ -115,5 +83,3 @@ procwhy --no-pager 1234
 ## License
 
 MIT OR Apache-2.0
-
-
