@@ -24,6 +24,52 @@ Instead of dumping tables of raw counters and leaving you to connect the dots du
   <img src="assets/demo.svg" alt="procwhy terminal demo" width="100%">
 </p>
 
+## Real-World Examples
+
+### 1. Disk space isn't freed after deleting log files
+> **Incident**: `df -h` reports `100% full`, but `du -sh *` doesn't show where the space went. You unlinked old log files, but the disk was never released.
+
+```bash
+$ procwhy myapp
+
+WARN: [DELETED FILES]  [CONFIRMED]
+  Observation:     1 deleted file descriptor held open (8.7 GB allocated on disk).
+  Evidence:        1 deleted file descriptor | Sample path: /var/log/myapp.log (deleted)
+  Interpretation:  The file was unlinked but remains allocated on disk because the process still holds an open descriptor.
+  Recommendation:  Restart or reload the process to release the descriptor and free disk space.
+```
+
+### 2. Process won't terminate even with `kill -9`
+> **Incident**: A worker process hangs indefinitely and ignores `SIGKILL` (`kill -9`).
+
+```bash
+$ procwhy worker
+
+CRITICAL: [D-STATE HANG]  [CONFIRMED]
+  Observation:     Process is in Uninterruptible Sleep (D-state) on kernel wait channel 'nfs_wait_client'.
+  Evidence:        Scheduler state: TASK_UNINTERRUPTIBLE (D) | Kernel wait channel (wchan): nfs_wait_client
+  Interpretation:  Process is blocked inside a kernel driver or storage I/O operation. POSIX signals (including SIGKILL) are deferred until the kernel I/O unblocks.
+  Recommendation:  Inspect storage subsystem, hung NFS mounts, or kernel dmesg logs for storage/driver timeouts.
+```
+
+### 3. "What is using port 8080?"
+> **Incident**: A deployment fails with `EADDRINUSE: address already in use :::8080`.
+
+```bash
+$ procwhy :8080
+
+PORT :8080 ─> node (PID 4812)  node /srv/api/server.js
+────────────────────────────────────────────────────────────
+
+WARN: [PUBLIC LISTENER]  [POSSIBLE]
+  Observation:     Process is bound to wildcard interface: TCP 0.0.0.0:8080 (LISTEN)
+  Evidence:        Listener: TCP 0.0.0.0:8080 | Active external connections: 17
+  Interpretation:  Socket accepts incoming traffic from all network interfaces if unfirewalled.
+  Recommendation:  Verify whether public exposure is intended or bind to 127.0.0.1 for internal services.
+```
+
+---
+
 ## The Diagnostic Engine
 
 Trust is the entire product. `procwhy` grounds every finding in a strict 4-part architecture:
