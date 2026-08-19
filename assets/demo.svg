@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 980" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 1020" width="100%" height="100%">
   <defs>
     <style>
       .bg { fill: #0d1117; }
@@ -12,71 +12,69 @@
       .yellow-bold { fill: #d29922; font-weight: 700; }
       .cyan { fill: #39c5cf; }
       .cyan-bold { fill: #39c5cf; font-weight: 700; }
+      .red-bold { fill: #f85149; font-weight: 700; }
       .white { fill: #f0f6fc; }
     </style>
   </defs>
 
-  <!-- Clean dark background with subtle border -->
-  <rect width="880" height="980" rx="8" ry="8" class="bg"/>
-  <rect width="880" height="980" rx="8" ry="8" class="border"/>
+  <rect width="880" height="1020" rx="8" ry="8" class="bg"/>
+  <rect width="880" height="1020" rx="8" ry="8" class="border"/>
 
-  <!-- Terminal content -->
   <g transform="translate(25, 30)" class="term">
-    <!-- Prompt -->
-    <text y="0"><tspan class="dim">$</tspan> <tspan class="bold white">procwhy</tspan> <tspan class="green">545719</tspan></text>
-
     <!-- Header -->
-    <text y="34"><tspan class="bold white">PID</tspan> <tspan class="white">545719</tspan>  <tspan class="green">firefox</tspan></text>
+    <text y="0"><tspan class="dim">procwhy</tspan> <tspan class="dim">1.0.0</tspan></text>
+    <text y="28"><tspan class="green">node</tspan> <tspan class="dim">(PID 4812)</tspan>  <tspan class="dim">node /srv/api/server.js</tspan></text>
+    <text y="46" class="dim">────────────────────────────────────────────────────────────</text>
 
-    <!-- VERDICT -->
-    <text y="70" class="blue">VERDICT</text>
-    <text y="92"><tspan class="yellow-bold">  WARN:</tspan> [<tspan class="yellow">DELETED FILES</tspan>] <tspan class="white">5 open file handles point to deleted files (e.g. /home/user/.cache/app.log (deleted)).</tspan></text>
-    <text y="112" class="dim">    Hint: Restart the process to release deleted file handles and free disk space.</text>
-    <text y="134"><tspan class="yellow-bold">  WARN:</tspan> [<tspan class="yellow">HIGH CHILD COUNT</tspan>] <tspan class="white">Process (PID 545719) has spawned 127 child processes.</tspan></text>
-    <text y="154" class="dim">    Hint: Ensure child processes are reaped to avoid process table exhaustion.</text>
-    <text y="176"><tspan class="cyan-bold">  INFO:</tspan> [<tspan class="cyan">HIGH FD COUNT</tspan>] <tspan class="white">Process has 115 open file descriptors and sockets.</tspan></text>
+    <!-- Health -->
+    <text y="74"><tspan class="blue">HEALTH</tspan>       <tspan class="yellow-bold">WARN</tspan></text>
 
-    <!-- STATS -->
-    <text y="212" class="blue">STATS</text>
-    <text y="234">  CPU        <tspan class="white">0.0%</tspan></text>
-    <text y="254">  Memory     <tspan class="white">1236.3 MB</tspan> <tspan class="dim">(5.3% of 23.0 GB)</tspan></text>
-    <text y="274">  Disk I/O   <tspan class="white">0 B/s</tspan></text>
-    <text y="294">  Status     <tspan class="white">Sleep</tspan></text>
-    <text y="314">  Wait Chan  <tspan class="dim">poll_schedule_timeout.constprop.0</tspan></text>
+    <!-- Identity -->
+    <text y="104" class="blue">IDENTITY</text>
+    <text y="124">  Binary     <tspan class="white">/usr/bin/node</tspan></text>
+    <text y="144">  User       <tspan class="white">app (UID 1000)</tspan></text>
+    <text y="164">  CWD        <tspan class="white">/srv/api</tspan></text>
+    <text y="184">  Uptime     <tspan class="white">3h 42m</tspan></text>
 
-    <!-- ENVIRONMENT -->
-    <text y="350" class="blue">ENVIRONMENT (Top 5)</text>
-    <text y="372" class="dim">  PATH=/usr/local/bin:/usr/bin:...</text>
-    <text y="392" class="dim">  ...and 45 more</text>
+    <!-- Ancestry -->
+    <text y="214" class="blue">ANCESTRY</text>
+    <text y="234">  <tspan class="dim">systemd (1)</tspan> ─> <tspan class="dim">docker (890)</tspan> ─> <tspan class="dim">containerd (1204)</tspan> ─> <tspan class="green">node (4812)</tspan></text>
 
-    <!-- CHILDREN -->
-    <text y="428" class="blue">CHILDREN (Top 5)</text>
-    <text y="450">  └─ <tspan class="dim">Socket Thread</tspan> <tspan class="bold white">545741</tspan></text>
-    <text y="470">  └─ <tspan class="dim">Compositor</tspan> <tspan class="bold white">545794</tspan></text>
-    <text y="490">  └─ <tspan class="dim">Renderer</tspan> <tspan class="bold white">545780</tspan></text>
-    <text y="510">  └─ <tspan class="dim">TaskController</tspan> <tspan class="bold white">545763</tspan></text>
-    <text y="530">  └─ <tspan class="dim">IPC I/O Parent</tspan> <tspan class="bold white">545738</tspan></text>
-    <text y="550" class="dim">  ...and 122 more</text>
+    <!-- Resources -->
+    <text y="264" class="blue">RESOURCES</text>
+    <text y="284">  CPU        <tspan class="yellow-bold">96.8%</tspan></text>
+    <text y="304">  Memory     <tspan class="white">2.4 GB</tspan> <tspan class="dim">(10.4% of 23.0 GB)</tspan></text>
+    <text y="324">  Disk I/O   <tspan class="white">14.2 MB/s Read, 0 B/s Write</tspan></text>
+    <text y="344">  Status     <tspan class="white">Running</tspan></text>
 
-    <!-- NETWORK -->
-    <text y="586" class="blue">NETWORK</text>
-    <text y="608">  → <tspan class="yellow">TCP 192.168.1.83:53736 -> 34.107.243.93:443 (ESTABLISHED)</tspan></text>
-    <text y="628">  → <tspan class="yellow">TCP [2a0d:3341:...]:43816 -> [2606:4700:...]:443 (ESTABLISHED)</tspan></text>
-    <text y="648">  → <tspan class="yellow">UDP [::]:43319</tspan></text>
+    <!-- Diagnostics -->
+    <text y="374" class="blue">DIAGNOSTICS</text>
+    <text y="394"><tspan class="yellow-bold">  WARN:</tspan> [<tspan class="yellow">HIGH CPU</tspan>] <tspan class="white">Process is consuming 96.8% CPU (sustained busy loop or heavy computation).</tspan></text>
+    <text y="414" class="dim">    Hint: Profile active threads for spinlocks or unthrottled polling loops.</text>
+    <text y="434"><tspan class="yellow-bold">  WARN:</tspan> [<tspan class="yellow">DELETED FILES</tspan>] <tspan class="white">Process holds 1 open file handle(s) to unlinked/deleted files (/tmp/cache.db (deleted)).</tspan></text>
+    <text y="454" class="dim">    Hint: Restart or signal the process to release deleted file handles and reclaim disk space.</text>
+    <text y="474"><tspan class="yellow-bold">  WARN:</tspan> [<tspan class="yellow">WILDCARD BIND</tspan>] <tspan class="white">Publicly listening on TCP 0.0.0.0:8080, exposing the service to all reachable network interfaces.</tspan></text>
+    <text y="494" class="dim">    Hint: Bind to 127.0.0.1 if public external access is unintended.</text>
+    <text y="514"><tspan class="cyan-bold">  INFO:</tspan> [<tspan class="cyan">HIGH FD COUNT</tspan>] <tspan class="white">Process has 18,421 open file descriptors and sockets.</tspan></text>
 
-    <!-- UNIX SOCKETS -->
-    <text y="684" class="blue">UNIX SOCKETS (Top 5)</text>
-    <text y="706">  → <tspan class="cyan">/run/user/1000/wayland-proxy-545719</tspan></text>
-    <text y="726">  → <tspan class="cyan">[socket: 829325]</tspan></text>
-    <text y="746">  → <tspan class="cyan">[unnamed SEQPACKET socket (inode 1004626)]</tspan></text>
-    <text y="766">  → <tspan class="cyan">[unnamed SEQPACKET socket (inode 1056766)]</tspan></text>
-    <text y="786" class="dim">  ...and 42 more</text>
+    <!-- Summary -->
+    <text y="544" class="blue">SUMMARY</text>
+    <text y="564">  <tspan class="white">Process is consuming unusually high CPU, holding open deleted files, and publicly exposed on a wildcard interface.</tspan></text>
 
-    <!-- FILES -->
-    <text y="822" class="blue">FILES (Top 5)</text>
-    <text y="844">  /dev/dri/renderD128</text>
-    <text y="864">  /dev/null</text>
-    <text y="884">  /dev/tty1</text>
-    <text y="904" class="dim">  ...and 57 more</text>
+    <!-- Network -->
+    <text y="594" class="blue">NETWORK</text>
+    <text y="614">  LISTEN     <tspan class="yellow">TCP 0.0.0.0:8080 (LISTEN)</tspan></text>
+    <text y="634">  OUTBOUND   <tspan class="white">41 connections (38 external)</tspan></text>
+    <text y="654">  → <tspan class="yellow">TCP 192.168.1.50:54312 -> 93.184.216.34:443 (ESTABLISHED)</tspan></text>
+    <text y="674">  → <tspan class="yellow">TCP 192.168.1.50:54314 -> 140.82.112.21:443 (ESTABLISHED)</tspan></text>
+    <text y="694" class="dim">  ...and 39 more</text>
+
+    <!-- Files -->
+    <text y="724" class="blue">FILES (Top 5)</text>
+    <text y="744">  /tmp/cache.db (deleted)</text>
+    <text y="764">  /srv/api/server.js</text>
+    <text y="784">  /srv/api/node_modules/pg/lib/index.js</text>
+    <text y="804">  /dev/null</text>
+    <text y="824" class="dim">  ...and 18,417 more</text>
   </g>
 </svg>

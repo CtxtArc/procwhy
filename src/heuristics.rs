@@ -10,6 +10,29 @@ pub enum Severity {
     Critical,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Health {
+    Ok,
+    Info,
+    Warning,
+    Critical,
+}
+
+impl Health {
+    pub fn from_findings(findings: &[Finding]) -> Self {
+        if findings.iter().any(|f| f.severity == Severity::Critical) {
+            Health::Critical
+        } else if findings.iter().any(|f| f.severity == Severity::Warning) {
+            Health::Warning
+        } else if findings.iter().any(|f| f.severity == Severity::Info) {
+            Health::Info
+        } else {
+            Health::Ok
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Finding {
     pub severity: Severity,
@@ -17,6 +40,46 @@ pub struct Finding {
     pub message: String,
     pub recommendation: Option<String>,
 }
+
+pub fn generate_summary(findings: &[Finding]) -> String {
+    if findings.is_empty() {
+        return "Operating within normal resource thresholds and operating baseline.".to_string();
+    }
+
+    let mut highlights = Vec::new();
+    for f in findings {
+        match f.category {
+            "D-STATE HANG" => highlights.push("stuck in uninterruptible kernel sleep (D-state)"),
+            "CRITICAL RAM" => highlights.push("consuming critical memory (high OOM risk)"),
+            "HIGH RAM" => highlights.push("consuming significant system RAM"),
+            "HIGH CPU" => highlights.push("consuming unusually high CPU"),
+            "HIGH DISK I/O" => highlights.push("generating heavy disk throughput"),
+            "DELETED FILES" => highlights.push("holding open file handles to deleted files"),
+            "WILDCARD BIND" => highlights.push("publicly exposed on a wildcard interface"),
+            "HIGH TCP CONNS" => highlights.push("holding a high number of external connections"),
+            "HIGH FD COUNT" => highlights.push("maintaining a large number of open file descriptors"),
+            "ZOMBIE PROCESS" => highlights.push("defunct and awaiting reaping by parent"),
+            "HIGH CHILD COUNT" => highlights.push("spawning an unusually high number of children"),
+            "PRIVILEGED PORT" => highlights.push("bound to a privileged system port (<1024)"),
+            _ => highlights.push(f.category),
+        }
+    }
+
+    highlights.dedup();
+    if highlights.len() == 1 {
+        format!("Process is {}.", highlights[0])
+    } else if highlights.len() == 2 {
+        format!("Process is {} and {}.", highlights[0], highlights[1])
+    } else {
+        format!(
+            "Process is {}, {}, and {}.",
+            highlights[0],
+            highlights[1],
+            highlights[2]
+        )
+    }
+}
+
 
 
 pub struct ProcessSnapshot<'a> {
@@ -611,5 +674,81 @@ mod tests {
             "PATH=/usr/local/bin:/usr/bin"
         );
     }
+
+    #[test]
+    fn test_health_levels_from_findings() {
+        assert_eq!(Health::from_findings(&[]), Health::Ok);
+
+        let info_finding = vec![Finding {
+            severity: Severity::Info,
+            category: "LOCK CONTENTION",
+            message: "Waiting on futex".to_string(),
+            recommendation: None,
+        }];
+        assert_eq!(Health::from_findings(&info_finding), Health::Info);
+
+        let warn_finding = vec![Finding {
+            severity: Severity::Warning,
+            category: "HIGH CPU",
+            message: "CPU 95%".to_string(),
+            recommendation: None,
+        }];
+        assert_eq!(Health::from_findings(&warn_finding), Health::Warning);
+
+        let critical_finding = vec![
+            Finding {
+                severity: Severity::Warning,
+                category: "HIGH CPU",
+                message: "CPU 95%".to_string(),
+                recommendation: None,
+            },
+            Finding {
+                severity: Severity::Critical,
+                category: "D-STATE HANG",
+                message: "Stuck in D-state".to_string(),
+                recommendation: None,
+            },
+        ];
+        assert_eq!(Health::from_findings(&critical_finding), Health::Critical);
+    }
+
+    #[test]
+    fn test_generate_summary_outputs() {
+        assert_eq!(
+            generate_summary(&[]),
+            "Operating within normal resource thresholds and operating baseline."
+        );
+
+        let one_finding = vec![Finding {
+            severity: Severity::Warning,
+            category: "DELETED FILES",
+            message: "Deleted files held".to_string(),
+            recommendation: None,
+        }];
+        assert_eq!(
+            generate_summary(&one_finding),
+            "Process is holding open file handles to deleted files."
+        );
+
+        let two_findings = vec![
+            Finding {
+                severity: Severity::Warning,
+                category: "HIGH CPU",
+                message: "CPU 95%".to_string(),
+                recommendation: None,
+            },
+            Finding {
+                severity: Severity::Warning,
+                category: "DELETED FILES",
+                message: "Deleted files held".to_string(),
+                recommendation: None,
+            },
+        ];
+        assert_eq!(
+            generate_summary(&two_findings),
+            "Process is consuming unusually high CPU and holding open file handles to deleted files."
+        );
+    }
 }
+
 
