@@ -24,7 +24,13 @@ Instead of dumping tables of raw counters and leaving you to connect the dots du
   <img src="assets/demo.svg" alt="procwhy terminal demo" width="100%">
 </p>
 
+## Why procwhy?
+
+`ps`, `top`, `lsof`, and `ss` show individual pieces.
+`procwhy` connects those observations into an actionable diagnosis.
+
 ## Real-World Examples
+
 
 ### 1. Disk space isn't freed after deleting log files
 > **Incident**: `df -h` reports `100% full`, but `du -sh *` doesn't show where the space went. You unlinked old log files, but the disk was never released.

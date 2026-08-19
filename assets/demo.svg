@@ -1,13 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 1120" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 1140" width="100%" height="100%">
   <defs>
     <style>
       .bg { fill: #0d1117; }
       .border { stroke: #30363d; stroke-width: 1px; fill: none; }
-      .term { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 13px; fill: #c9d1d9; }
+      .term { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 13.5px; fill: #c9d1d9; }
       .bold { font-weight: 700; }
       .dim { fill: #8b949e; }
-      .prompt { fill: #7ee787; font-weight: 700; }
-      .cmd { fill: #f0f6fc; font-weight: 700; }
+      .prompt-user { fill: #7ee787; font-weight: 700; }
+      .prompt-at { fill: #8b949e; }
+      .prompt-path { fill: #58a6ff; font-weight: 700; }
+      .prompt-char { fill: #f0f6fc; font-weight: 700; }
+      .cmd { fill: #ffffff; font-weight: 700; }
       .green { fill: #3fb950; font-weight: 700; }
       .blue { fill: #58a6ff; font-weight: 700; }
       .yellow { fill: #d29922; }
@@ -19,77 +22,77 @@
     </style>
   </defs>
 
-  <rect width="880" height="1120" rx="8" ry="8" class="bg"/>
-  <rect width="880" height="1120" rx="8" ry="8" class="border"/>
+  <rect width="880" height="1140" rx="8" ry="8" class="bg"/>
+  <rect width="880" height="1140" rx="8" ry="8" class="border"/>
 
-  <g transform="translate(25, 30)" class="term">
-    <!-- Prompt Command Line -->
-    <text y="0"><tspan class="prompt">$</tspan> <tspan class="cmd">procwhy :8080</tspan></text>
+  <g transform="translate(28, 32)" class="term">
+    <!-- Typed Shell Command Line -->
+    <text y="16"><tspan class="prompt-user">user</tspan><tspan class="prompt-at">@</tspan><tspan class="prompt-user">prod-api-01</tspan><tspan class="prompt-at">:</tspan><tspan class="prompt-path">~</tspan><tspan class="prompt-char">$</tspan> <tspan class="cmd">procwhy :8080</tspan></text>
 
     <!-- Header -->
-    <text y="32"><tspan class="dim">procwhy</tspan> <tspan class="dim">1.0.0</tspan></text>
-    <text y="60"><tspan class="yellow-bold">PORT :8080 ─> </tspan><tspan class="green">node</tspan> <tspan class="dim">(PID 4812)</tspan>  <tspan class="dim">node /srv/api/server.js</tspan></text>
-    <text y="78" class="dim">────────────────────────────────────────────────────────────</text>
+    <text y="48"><tspan class="dim">procwhy</tspan> <tspan class="dim">1.0.0</tspan></text>
+    <text y="78"><tspan class="yellow-bold">PORT :8080 ─> </tspan><tspan class="green">node</tspan> <tspan class="dim">(PID 4812)</tspan>  <tspan class="dim">node /srv/api/server.js</tspan></text>
+    <text y="98" class="dim">────────────────────────────────────────────────────────────</text>
 
     <!-- Health -->
-    <text y="106"><tspan class="blue">HEALTH</tspan>       <tspan class="yellow-bold">WARN</tspan></text>
+    <text y="128"><tspan class="blue">HEALTH</tspan>       <tspan class="yellow-bold">WARN</tspan></text>
 
     <!-- Identity -->
-    <text y="136" class="blue">IDENTITY</text>
-    <text y="156">  Binary     <tspan class="white">/usr/bin/node</tspan></text>
-    <text y="176">  User       <tspan class="white">app (UID 1000)</tspan></text>
-    <text y="196">  CWD        <tspan class="white">/srv/api</tspan></text>
-    <text y="216">  Uptime     <tspan class="white">3h 42m</tspan></text>
+    <text y="158" class="blue">IDENTITY</text>
+    <text y="178">  Binary     <tspan class="white">/usr/bin/node</tspan></text>
+    <text y="198">  User       <tspan class="white">app (UID 1000)</tspan></text>
+    <text y="218">  CWD        <tspan class="white">/srv/api</tspan></text>
+    <text y="238">  Uptime     <tspan class="white">3h 42m</tspan></text>
 
     <!-- Ancestry -->
-    <text y="246" class="blue">ANCESTRY</text>
-    <text y="266">  <tspan class="dim">systemd (1)</tspan> ─> <tspan class="dim">docker (890)</tspan> ─> <tspan class="dim">containerd (1204)</tspan> ─> <tspan class="green">node (4812)</tspan></text>
+    <text y="268" class="blue">ANCESTRY</text>
+    <text y="288">  <tspan class="dim">systemd (1)</tspan> ─> <tspan class="dim">docker (890)</tspan> ─> <tspan class="dim">containerd (1204)</tspan> ─> <tspan class="green">node (4812)</tspan></text>
 
     <!-- Resources -->
-    <text y="296" class="blue">RESOURCES</text>
-    <text y="316">  CPU        <tspan class="yellow-bold">97.8%</tspan></text>
-    <text y="336">  Memory     <tspan class="white">2.4 GB</tspan> <tspan class="dim">(10.4% of 23.0 GB)</tspan></text>
-    <text y="356">  Disk I/O   <tspan class="white">14.2 MB/s Read, 0 B/s Write</tspan></text>
-    <text y="376">  Status     <tspan class="white">Running</tspan></text>
+    <text y="318" class="blue">RESOURCES</text>
+    <text y="338">  CPU        <tspan class="yellow-bold">97.8%</tspan></text>
+    <text y="358">  Memory     <tspan class="white">2.4 GB</tspan> <tspan class="dim">(10.4% of 23.0 GB)</tspan></text>
+    <text y="378">  Disk I/O   <tspan class="white">14.2 MB/s Read, 0 B/s Write</tspan></text>
+    <text y="398">  Status     <tspan class="white">Running</tspan></text>
 
     <!-- Diagnostics -->
-    <text y="406" class="blue">DIAGNOSTICS</text>
-    <text y="426"><tspan class="yellow-bold">  WARN: [DELETED FILES]  </tspan><tspan class="green">[CONFIRMED]</tspan></text>
-    <text y="444">    <tspan class="dim">Observation:    </tspan><tspan class="white">5 deleted file descriptor(s) held open (4.2 GB allocated on disk).</tspan></text>
-    <text y="462">    <tspan class="dim">Evidence:       </tspan><tspan class="dim">5 deleted file descriptors | Total allocated: 4.2 GB | Largest: /var/log/app.log (4.2 GB)</tspan></text>
-    <text y="480">    <tspan class="dim">Interpretation: </tspan><tspan class="white">Filesystem space remains allocated and cannot be reclaimed.</tspan></text>
-    <text y="498">    <tspan class="dim">Recommendation: </tspan><tspan class="white">Restart or signal the process to release deleted file handles.</tspan></text>
+    <text y="428" class="blue">DIAGNOSTICS</text>
+    <text y="448"><tspan class="yellow-bold">  WARN: [DELETED FILES]  </tspan><tspan class="green">[CONFIRMED]</tspan></text>
+    <text y="468">    <tspan class="dim">Observation:    </tspan><tspan class="white">5 deleted file descriptor(s) held open (4.2 GB allocated on disk).</tspan></text>
+    <text y="488">    <tspan class="dim">Evidence:       </tspan><tspan class="dim">5 deleted file descriptors | Total allocated: 4.2 GB | Largest: /var/log/app.log (4.2 GB)</tspan></text>
+    <text y="508">    <tspan class="dim">Interpretation: </tspan><tspan class="white">Filesystem space remains allocated and cannot be reclaimed.</tspan></text>
+    <text y="528">    <tspan class="dim">Recommendation: </tspan><tspan class="white">Restart or signal the process to release deleted file handles.</tspan></text>
 
-    <text y="528"><tspan class="yellow-bold">  WARN: [CPU PEGGING]    </tspan><tspan class="yellow-bold">[LIKELY]</tspan></text>
-    <text y="546">    <tspan class="dim">Observation:    </tspan><tspan class="white">97.8% CPU utilization over the sampling window.</tspan></text>
-    <text y="564">    <tspan class="dim">Evidence:       </tspan><tspan class="dim">CPU: 97.8% | Scheduler state: Running | wchan: - | Sample duration: 200ms</tspan></text>
-    <text y="582">    <tspan class="dim">Interpretation: </tspan><tspan class="white">Likely CPU-bound execution (busy-loop or unthrottled computation).</tspan></text>
-    <text y="600">    <tspan class="dim">Recommendation: </tspan><tspan class="white">Capture a stack profile (perf/pstack) to identify the hot code path.</tspan></text>
+    <text y="558"><tspan class="yellow-bold">  WARN: [CPU PEGGING]    </tspan><tspan class="yellow-bold">[LIKELY]</tspan></text>
+    <text y="578">    <tspan class="dim">Observation:    </tspan><tspan class="white">97.8% CPU utilization over the sampling window.</tspan></text>
+    <text y="598">    <tspan class="dim">Evidence:       </tspan><tspan class="dim">CPU: 97.8% | Scheduler state: Running | wchan: - | Sample duration: 200ms</tspan></text>
+    <text y="618">    <tspan class="dim">Interpretation: </tspan><tspan class="white">Likely CPU-bound execution (busy-loop or unthrottled computation).</tspan></text>
+    <text y="638">    <tspan class="dim">Recommendation: </tspan><tspan class="white">Capture a stack profile (perf/pstack) to identify the hot code path.</tspan></text>
 
-    <text y="630"><tspan class="yellow-bold">  WARN: [PUBLIC LISTENER]</tspan><tspan class="cyan-bold">  [POSSIBLE]</tspan></text>
-    <text y="648">    <tspan class="dim">Observation:    </tspan><tspan class="white">Process is bound to wildcard interface TCP 0.0.0.0:8080.</tspan></text>
-    <text y="666">    <tspan class="dim">Evidence:       </tspan><tspan class="dim">Listener: TCP 0.0.0.0:8080 | Active external connections: 17</tspan></text>
-    <text y="684">    <tspan class="dim">Interpretation: </tspan><tspan class="white">Socket accepts incoming traffic from all network interfaces if unfirewalled.</tspan></text>
-    <text y="702">    <tspan class="dim">Recommendation: </tspan><tspan class="white">Verify whether the service should bind to all interfaces or 127.0.0.1.</tspan></text>
+    <text y="668"><tspan class="yellow-bold">  WARN: [PUBLIC LISTENER]</tspan><tspan class="cyan-bold">  [POSSIBLE]</tspan></text>
+    <text y="688">    <tspan class="dim">Observation:    </tspan><tspan class="white">Process is bound to wildcard interface TCP 0.0.0.0:8080.</tspan></text>
+    <text y="708">    <tspan class="dim">Evidence:       </tspan><tspan class="dim">Listener: TCP 0.0.0.0:8080 | Active external connections: 17</tspan></text>
+    <text y="728">    <tspan class="dim">Interpretation: </tspan><tspan class="white">Socket accepts incoming traffic from all network interfaces if unfirewalled.</tspan></text>
+    <text y="748">    <tspan class="dim">Recommendation: </tspan><tspan class="white">Verify whether the service should bind to all interfaces or 127.0.0.1.</tspan></text>
 
     <!-- Summary -->
-    <text y="738" class="blue">SUMMARY</text>
-    <text y="758">  <tspan class="white">Process is consuming unusually high CPU, holding open deleted files, and publicly exposed on a wildcard interface.</tspan></text>
+    <text y="784" class="blue">SUMMARY</text>
+    <text y="804">  <tspan class="white">Process is consuming unusually high CPU, holding open deleted files, and publicly exposed on a wildcard interface.</tspan></text>
 
     <!-- Network -->
-    <text y="788" class="blue">NETWORK</text>
-    <text y="808">  LISTEN     <tspan class="yellow">TCP 0.0.0.0:8080 (LISTEN)</tspan></text>
-    <text y="828">  OUTBOUND   <tspan class="white">41 connections (17 external)</tspan></text>
-    <text y="848">  → <tspan class="yellow">TCP 192.168.1.50:54312 -> 93.184.216.34:443 (ESTABLISHED)</tspan></text>
-    <text y="868">  → <tspan class="yellow">TCP 192.168.1.50:54314 -> 140.82.112.21:443 (ESTABLISHED)</tspan></text>
-    <text y="888" class="dim">  ...and 39 more</text>
+    <text y="834" class="blue">NETWORK</text>
+    <text y="854">  LISTEN     <tspan class="yellow">TCP 0.0.0.0:8080 (LISTEN)</tspan></text>
+    <text y="874">  OUTBOUND   <tspan class="white">41 connections (17 external)</tspan></text>
+    <text y="894">  → <tspan class="yellow">TCP 192.168.1.50:54312 -> 93.184.216.34:443 (ESTABLISHED)</tspan></text>
+    <text y="914">  → <tspan class="yellow">TCP 192.168.1.50:54314 -> 140.82.112.21:443 (ESTABLISHED)</tspan></text>
+    <text y="934" class="dim">  ...and 39 more</text>
 
     <!-- Files -->
-    <text y="918" class="blue">FILES (Top 5)</text>
-    <text y="938">  /var/log/app.log (deleted)</text>
-    <text y="958">  /srv/api/server.js</text>
-    <text y="978">  /srv/api/node_modules/pg/lib/index.js</text>
-    <text y="998">  /dev/null</text>
-    <text y="1018" class="dim">  ...and 18,417 more</text>
+    <text y="964" class="blue">FILES (Top 5)</text>
+    <text y="984">  /var/log/app.log (deleted)</text>
+    <text y="1004">  /srv/api/server.js</text>
+    <text y="1024">  /srv/api/node_modules/pg/lib/index.js</text>
+    <text y="1044">  /dev/null</text>
+    <text y="1064" class="dim">  ...and 18,417 more</text>
   </g>
 </svg>
