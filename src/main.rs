@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use colored::*;
 use finder::{parse_target_query, resolve_pid, TargetQuery};
-use heuristics::{analyze_snapshot, generate_summary, redact_env_var, Health, ProcessSnapshot, Severity};
+use heuristics::{analyze_snapshot, generate_summary, redact_env_var, Confidence, Health, ProcessSnapshot, Severity};
 use io::{format_bytes_rate, get_disk_io, get_process_io, get_wchan, DiskIoRate};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -19,7 +19,7 @@ use sysinfo::{Pid, System, Users};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Parser)]
-#[command(author, version, about = "Turn raw process telemetry into actionable process diagnoses")]
+#[command(author, version, about = "What is wrong with this process right now?")]
 struct Cli {
     /// PID, process name (e.g. 'node'), or port (e.g. ':8080') to inspect
     #[arg(value_name = "TARGET")]
@@ -32,6 +32,10 @@ struct Cli {
     /// Show all files, sockets, children, and environment variables without truncation
     #[arg(short, long)]
     all: bool,
+
+    /// Explain diagnostics in detail with kernel mechanics and evidence
+    #[arg(short, long)]
+    explain: bool,
 
     /// Output full diagnostic report in structured JSON format
     #[arg(short, long)]
@@ -456,37 +460,33 @@ fn main() -> Result<()> {
         )?;
     } else {
         for finding in &findings {
-            match finding.severity {
-                Severity::Critical => {
-                    writeln!(
-                        out,
-                        "  {} [{}] {}",
-                        "CRITICAL:".red().bold(),
-                        finding.category.red().bold(),
-                        finding.message.bold()
-                    )?;
+            let conf_badge = match finding.confidence {
+                Confidence::Confirmed => "[CONFIRMED]".green().bold(),
+                Confidence::Likely => "[LIKELY]".yellow().bold(),
+                Confidence::Possible => "[POSSIBLE]".cyan().bold(),
+            };
+
+            let (sev_str, cat_str) = match finding.severity {
+                Severity::Critical => ("CRITICAL:".red().bold(), finding.category.red().bold()),
+                Severity::Warning => ("WARN:".yellow().bold(), finding.category.yellow().bold()),
+                Severity::Info => ("INFO:".cyan().bold(), finding.category.cyan().bold()),
+            };
+
+            writeln!(out, "  {} [{}]  {}", sev_str, cat_str, conf_badge)?;
+            writeln!(out, "    {:<12} {}", "Observed:".dimmed(), finding.observed)?;
+            writeln!(out, "    {:<12} {}", "Inference:".dimmed(), finding.inference)?;
+            writeln!(out, "    {:<12} {}", "Action:".dimmed(), finding.recommendation)?;
+
+            if cli.explain {
+                if !finding.evidence.is_empty() {
+                    writeln!(out, "    {}", "Evidence:".dimmed())?;
+                    for ev in &finding.evidence {
+                        writeln!(out, "      • {}", ev.dimmed())?;
+                    }
                 }
-                Severity::Warning => {
-                    writeln!(
-                        out,
-                        "  {} [{}] {}",
-                        "WARN:".yellow().bold(),
-                        finding.category.yellow().bold(),
-                        finding.message
-                    )?;
+                if let Some(ref exp) = finding.explanation {
+                    writeln!(out, "    {:<12} {}", "Why:".dimmed(), exp.dimmed())?;
                 }
-                Severity::Info => {
-                    writeln!(
-                        out,
-                        "  {} [{}] {}",
-                        "INFO:".cyan().bold(),
-                        finding.category.cyan().bold(),
-                        finding.message
-                    )?;
-                }
-            }
-            if let Some(ref rec) = finding.recommendation {
-                writeln!(out, "    {}", format!("Hint: {}", rec).dimmed())?;
             }
         }
     }
@@ -741,7 +741,6 @@ mod tests {
         assert_eq!(human_future, "unknown");
     }
 
-
     #[test]
     fn test_json_report_serialization() {
         let report = JsonReport {
@@ -771,9 +770,13 @@ mod tests {
             ],
             diagnostics: vec![heuristics::Finding {
                 severity: Severity::Warning,
+                confidence: Confidence::Confirmed,
                 category: "DELETED FILES",
-                message: "1 open file handle points to deleted file".to_string(),
-                recommendation: Some("Restart process".to_string()),
+                observed: "1 open file handle points to deleted file".to_string(),
+                inference: "Disk blocks remain held".to_string(),
+                recommendation: "Restart process to reclaim disk".to_string(),
+                evidence: vec!["Open unlinked descriptors: 1".to_string()],
+                explanation: Some("Inodes stay active while descriptors are open".to_string()),
             }],
             resources: JsonResources {
                 cpu_usage_percent: 15.5,
@@ -798,7 +801,23 @@ mod tests {
 
         let json = serde_json::to_string_pretty(&report).expect("Serialization failed");
         assert!(json.contains("\"health\": \"warning\""));
+        assert!(json.contains("\"confidence\": \"confirmed\""));
         assert!(json.contains("\"name\": \"test-service\""));
         assert!(json.contains("\"binary\": \"/usr/bin/node\""));
     }
+
+    #[test]
+    fn test_process_cwd_resolution() {
+        let path = std::path::Path::new("/tmp/test_dir");
+        assert_eq!(get_process_cwd(1234, Some(path)), "/tmp/test_dir");
+        assert_eq!(get_process_cwd(99999999, None), "unknown");
+    }
+
+    #[test]
+    fn test_empty_ancestry_handling() {
+        let sys = System::new();
+        let lineage = build_process_ancestry(Pid::from_u32(99999999), &sys);
+        assert!(lineage.is_empty());
+    }
 }
+
