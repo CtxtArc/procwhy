@@ -4,21 +4,21 @@
 
 # procwhy
 
-**Turn raw OS telemetry into actionable process diagnoses.**
+**Surfaces what the OS can measure. You decide what it means.**
 
 <p align="center">
   <img src="https://img.shields.io/badge/Release-v1.0.0-blue" alt="Release">
   <img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status">
   <img src="https://img.shields.io/badge/Tests-103_passing-brightgreen" alt="Tests">
-  <img src="https://img.shields.io/badge/Latency-13ms_warm-brightgreen" alt="Latency">
+  <img src="https://img.shields.io/badge/Latency-14ms_warm-brightgreen" alt="Latency">
   <img src="https://img.shields.io/badge/License-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/Platform-Linux_%7C_macOS-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/Language-Rust-orange" alt="Language">
 </p>
 
-`procwhy` is an opinionated process diagnostic CLI designed for incident response. It interrogates `/proc`, socket tables, and open file descriptors, evaluates heuristic diagnostic rules, and produces an actionable conclusion in **<500ms**.
+`procwhy` is an opinionated process diagnostic CLI for incident response. It interrogates `/proc`, socket tables, and open file descriptors, evaluates heuristic rules, and reports what it finds — with explicit confidence levels — in **~14ms warm**.
 
-Instead of dumping tables of raw counters and leaving you to connect the dots during an incident, `procwhy` evaluates diagnostic rules with explicit **confidence levels**, grounding every inference directly in evidence.
+Instead of dumping raw counters, `procwhy` gives you structured findings: what the OS measured, why it is operationally interesting, and a concrete next step. It does not pretend to know the root cause. That judgment belongs to the operator.
 
 <p align="center">
   <img src="assets/demo.svg" alt="procwhy terminal demo" width="100%">
@@ -26,11 +26,10 @@ Instead of dumping tables of raw counters and leaving you to connect the dots du
 
 ## Why procwhy?
 
-`ps`, `top`, `lsof`, and `ss` show individual pieces.
-`procwhy` connects those observations into an actionable diagnosis.
+`ps`, `top`, `lsof`, and `ss` each show one slice of the picture.
+`procwhy` brings those slices together and tells you what questions to ask next.
 
 ## Real-World Examples
-
 
 ### 1. Disk space isn't freed after deleting log files
 > **Incident**: `df -h` reports `100% full`, but `du -sh *` doesn't show where the space went. You unlinked old log files, but the disk was never released.
@@ -70,8 +69,8 @@ PORT :8080 ─> node (PID 4812)  node /srv/api/server.js
 WARN: [PUBLIC LISTENER]  [POSSIBLE]
   Observation:     Process is bound to wildcard interface: TCP 0.0.0.0:8080 (LISTEN)
   Evidence:        Listener: TCP 0.0.0.0:8080 | Active external connections: 17
-  Interpretation:  Socket accepts incoming traffic from all network interfaces if unfirewalled.
-  Recommendation:  Verify whether public exposure is intended or bind to 127.0.0.1 for internal services.
+  Interpretation:  This socket accepts connections on all network interfaces. For many services this is intentional and correct. Whether it represents a risk depends on firewall rules, network topology, and whether the service is meant to be externally reachable.
+  Recommendation:  Confirm the service is intended to be publicly reachable. If not, bind to 127.0.0.1 or a specific interface instead.
 ```
 
 ---
@@ -81,14 +80,19 @@ WARN: [PUBLIC LISTENER]  [POSSIBLE]
 Trust is the entire product. `procwhy` grounds every finding in a strict 4-part architecture:
 
 1. **Observation**: Something directly measured from the OS.
-2. **Evidence**: Concrete supporting metrics and telemetry triggers.
-3. **Interpretation**: What the evidence probably indicates.
-4. **Recommendation**: Practical next steps for the operator.
+2. **Evidence**: The concrete metrics and state that triggered the rule.
+3. **Interpretation**: What the evidence most likely indicates — stated without overclaiming.
+4. **Recommendation**: A practical next step for the operator.
 
-Findings are tagged with explicit confidence ratings:
-- **`[CONFIRMED]`**: Verifiable OS state (e.g. unlinked file descriptors holding disk space, zombie status, D-state hang).
-- **`[LIKELY]`**: Strong telemetry inferences (e.g. sustained CPU-bound execution over the sampling window, memory pressure approaching OOM limits).
-- **`[POSSIBLE]`**: Potential operational risks (e.g. listener bound to wildcard `0.0.0.0`, high child worker count).
+### Confidence Model
+
+Every finding carries an explicit confidence level. These are ordinal, not probabilistic — `procwhy` does not invent Bayesian scores.
+
+| Level | Semantics |
+|-------|-----------|
+| **`[CONFIRMED]`** | Directly verifiable OS state. The kernel reports this unambiguously (e.g. zombie status, D-state, unlinked file descriptor still holding disk). |
+| **`[LIKELY]`** | Strong inference supported by telemetry, but with acknowledged caveats (e.g. high RSS relative to host RAM — actual OOM risk also depends on swap and cgroup limits not measured here). |
+| **`[POSSIBLE]`** | Operationally interesting observation that requires operator judgment. Many `[POSSIBLE]` findings describe normal, intentional behaviour (e.g. a service bound to `0.0.0.0` is often correct). The tool surfaces the observation; you decide whether it is a problem. |
 
 ```text
 DIAGNOSTICS
@@ -101,22 +105,28 @@ DIAGNOSTICS
   WARN: [CPU PEGGING]    [LIKELY]
     Observation:    97.8% CPU utilization over the sampling window.
     Evidence:       CPU: 97.8% | Scheduler state: Running | wchan: - | Sample duration: 200ms
-    Interpretation: Likely CPU-bound execution (busy-loop or unthrottled computation).
-    Recommendation: Capture a stack profile (perf/pstack) to identify the hot code path.
+    Interpretation: Sustained high CPU utilization observed during the sampling window. The process was
+                    actively scheduled rather than waiting on I/O or a lock. Root cause cannot be
+                    determined from scheduler metrics alone.
+    Recommendation: Capture a stack profile (e.g. `perf top -p <pid>`) to identify the hot code path
+                    before drawing conclusions.
 ```
 
 ## Supported Diagnostic Rules
 
-- **Deleted File Leaks `[CONFIRMED]`**: Detects unlinked files still held open by descriptors, measuring exact bytes allocated on disk that cannot be freed.
-- **Uninterruptible D-State Hangs `[CONFIRMED]`**: Identifies kernel wait channels (`wchan`) when a process is blocked in storage I/O and cannot receive signals (including `kill -9`).
-- **Zombie / Defunct Processes `[CONFIRMED]`**: Identifies terminated child processes whose parent has not called `waitpid()` to reap them.
-- **CPU Pegging `[LIKELY]`**: Differentiates between sustained CPU-bound execution (>90% CPU) and idle lock waits.
-- **OOM Killer Risk `[LIKELY]`**: Calculates RSS consumption against host RAM and warns before the Linux OOM-killer intervenes.
-- **Disk Thrashing `[LIKELY]`**: Computes real-time I/O delta throughput (>20 MB/s) to catch runaway logging or swap activity.
-- **Public Wildcard Binds `[POSSIBLE]`**: Flags services listening on `0.0.0.0` or `[::]` exposed to external networks.
-- **Connection Spikes `[POSSIBLE]`**: Monitors active external TCP connections and connection pool exhaustion.
-- **Privileged Ports `[CONFIRMED]`**: Flags processes bound to reserved system ports (<1024).
-- **Credential Masking**: Automatically masks API tokens, bearer keys, and database passwords in environment variables.
+| Rule | Confidence | What it measures |
+|------|-----------|-----------------|
+| **Deleted File Leaks** | `[CONFIRMED]` | Unlinked files still held open by descriptors, with exact bytes that cannot be freed until the process releases them |
+| **D-State Hang** | `[CONFIRMED]` | Process in `TASK_UNINTERRUPTIBLE` state; signals including `SIGKILL` are deferred until the kernel I/O unblocks |
+| **Zombie Process** | `[CONFIRMED]` | Terminated child not yet reaped by its parent via `waitpid()` |
+| **Privileged Port** | `[CONFIRMED]` | Process bound to a reserved port below 1024 at listen time |
+| **CPU Pegging** | `[LIKELY]` | >90% CPU utilization over a 200ms sampling window; root cause requires a stack profile |
+| **High Memory Pressure** | `[LIKELY]` | RSS exceeds 50% of visible host RAM — note: actual OOM risk also depends on swap, cgroup limits, overcommit policy, and page-cache reclaim, none of which are measured here |
+| **High RAM** | `[LIKELY]` | RSS between 20–50% of visible host RAM |
+| **Disk Thrashing** | `[LIKELY]` | >20 MB/s I/O throughput delta over a 200ms window (charge bytes, not physical bandwidth) |
+| **Public Listener** | `[POSSIBLE]` | Socket bound to `0.0.0.0` or `[::]` — often intentional; operator judgment required |
+| **High TCP Connections** | `[POSSIBLE]` | >10 external TCP connections — normal for proxies and pooling services |
+| **Credential Masking** | — | Redacts API tokens, bearer keys, and database passwords from environment variable output |
 
 ## Usage
 
@@ -147,9 +157,9 @@ procwhy --all node
 procwhy --no-pager 1234
 ```
 
-### Incident Benchmark
+### Performance
 
-`procwhy` is built to be fast enough to use interactively during active incidents:
+`procwhy` is built to be fast enough to run interactively during active incidents:
 
 ```bash
 $ procwhy --benchmark
@@ -158,9 +168,9 @@ Running procwhy latency benchmark...
 Cold startup: 63.6ms
 Warm (p50):   14.2ms
 Warm (p95):   20.9ms
-
-Verdict: Well within the <500ms incident latency budget.
 ```
+
+Typical warm execution completes in ~14ms; designed for <500ms interactive incident diagnostics.
 
 ### JSON Automation
 

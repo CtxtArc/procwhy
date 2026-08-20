@@ -61,7 +61,7 @@ pub fn generate_summary(findings: &[Finding]) -> String {
     for f in findings {
         let label = match f.category {
             "D-STATE HANG" => "stuck in uninterruptible kernel sleep (D-state)",
-            "OOM KILLER RISK" => "consuming critical memory (high OOM risk)",
+            "HIGH MEMORY PRESSURE" => "consuming a large portion of host RAM (verify cgroup limits and swap)",
             "HIGH RAM" => "consuming significant system RAM",
             "CPU PEGGING" => "consuming unusually high CPU",
             "HIGH DISK I/O" => "generating heavy disk throughput",
@@ -238,20 +238,21 @@ fn check_memory_usage(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
 
     if mem_pct >= 50.0 {
         findings.push(Finding {
-            category: "OOM KILLER RISK",
-            severity: Severity::Critical,
+            category: "HIGH MEMORY PRESSURE",
+            severity: Severity::Warning,
             confidence: Confidence::Likely,
             observation: format!(
-                "Resident memory is {:.1} MB ({:.1}% of {:.1} GB system RAM).",
+                "Resident memory is {:.1} MB ({:.1}% of {:.1} GB host RAM).",
                 mem_mb, mem_pct, total_gb
             ),
             evidence: vec![
                 format!("Resident memory (RSS): {:.1} MB", mem_mb),
                 format!("Host RAM share: {:.1}%", mem_pct),
                 format!("Total host RAM: {:.1} GB", total_gb),
+                "Note: cgroup limits, swap, and overcommit are not accounted for here.".to_string(),
             ],
-            interpretation: "High probability of Linux kernel OOM-killer termination under system memory pressure.".to_string(),
-            recommendation: "Inspect memory growth profile, heap allocations, or configure container memory limits.".to_string(),
+            interpretation: "RSS accounts for at least half of visible host RAM. Whether this causes an OOM event depends on swap availability, cgroup memory limits, kernel overcommit policy, and page-cache reclaim — none of which are measured here.".to_string(),
+            recommendation: "Verify memory growth trend, check cgroup memory limits (memory.max), and inspect swap usage before concluding the process is at OOM risk.".to_string(),
         });
     } else if mem_pct >= 20.0 {
         findings.push(Finding {
@@ -259,15 +260,15 @@ fn check_memory_usage(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
             severity: Severity::Warning,
             confidence: Confidence::Likely,
             observation: format!(
-                "Process consumes {:.1} MB ({:.1}% of {:.1} GB system RAM).",
+                "Process consumes {:.1} MB ({:.1}% of {:.1} GB host RAM).",
                 mem_mb, mem_pct, total_gb
             ),
             evidence: vec![
                 format!("Resident memory (RSS): {:.1} MB", mem_mb),
                 format!("Host RAM share: {:.1}%", mem_pct),
             ],
-            interpretation: "Substantial physical memory footprint relative to total available system RAM.".to_string(),
-            recommendation: "Verify memory growth profile or configure cgroup memory limits.".to_string(),
+            interpretation: "Substantial RSS relative to visible host RAM. Actual system pressure depends on other processes, page cache, swap, and cgroup limits.".to_string(),
+            recommendation: "Monitor for growth over time or check cgroup memory limits if running in a container.".to_string(),
         });
     }
 }
@@ -285,8 +286,8 @@ fn check_cpu_usage(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>) {
                 format!("Kernel wait channel: {}", snapshot.wchan.unwrap_or("-")),
                 "Sample duration: 200ms".to_string(),
             ],
-            interpretation: "Likely CPU-bound execution (busy-loop or unthrottled computation).".to_string(),
-            recommendation: "Capture a stack profile (e.g. perf top / pstack) before terminating to identify the hot code path.".to_string(),
+            interpretation: "Sustained high CPU utilization observed during the sampling window. The process was actively scheduled rather than waiting on I/O or a lock. Root cause — busy-loop, heavy computation, or a spinning lock — cannot be determined from scheduler metrics alone.".to_string(),
+            recommendation: "Capture a stack profile (e.g. `perf top -p <pid>` or `pstack <pid>`) to identify the hot code path before drawing conclusions.".to_string(),
         });
     }
 }
@@ -325,8 +326,8 @@ fn check_wildcard_binds(snapshot: &ProcessSnapshot, findings: &mut Vec<Finding>)
             confidence: Confidence::Possible,
             observation: desc,
             evidence: vec![format!("Listener bind: {}", sample)],
-            interpretation: "Socket accepts incoming traffic from all network interfaces on the host if unfirewalled.".to_string(),
-            recommendation: "Verify whether the service should bind to all interfaces or 127.0.0.1.".to_string(),
+            interpretation: "This socket accepts connections on all network interfaces. For many services this is intentional and correct. Whether it represents a risk depends on firewall rules, network topology, and whether the service is meant to be externally reachable.".to_string(),
+            recommendation: "Confirm the service is intended to be publicly reachable. If not, bind to 127.0.0.1 or a specific interface instead.".to_string(),
         });
     }
 }
@@ -356,8 +357,8 @@ fn check_external_tcp_connections(snapshot: &ProcessSnapshot, findings: &mut Vec
                 external_count
             ),
             evidence: vec![format!("External connection count: {}", external_count)],
-            interpretation: "Elevated outbound or inbound network traffic, or potential connection pool exhaustion.".to_string(),
-            recommendation: "Check connection pool limits, HTTP keep-alive settings, or upstream service latency.".to_string(),
+            interpretation: "Elevated connection count relative to a baseline of 10. For a connection-pooling service, a proxy, or a load balancer this may be entirely expected. Worth verifying against the service's normal operating range.".to_string(),
+            recommendation: "Compare against the service's configured connection pool size. Investigate if connections are accumulating in TIME_WAIT or CLOSE_WAIT state.".to_string(),
         });
     }
 }
@@ -575,9 +576,11 @@ mod tests {
         snapshot.memory_bytes = 600;
 
         let findings = analyze_snapshot(&snapshot);
-        assert!(findings.iter().any(|f| f.category == "OOM KILLER RISK"));
-        assert_eq!(findings[0].severity, Severity::Critical);
-        assert_eq!(findings[0].confidence, Confidence::Likely);
+        assert!(findings.iter().any(|f| f.category == "HIGH MEMORY PRESSURE"));
+        let f = findings.iter().find(|f| f.category == "HIGH MEMORY PRESSURE").unwrap();
+        // Warning (not Critical) — RSS/host-RAM alone cannot reliably predict OOM events
+        assert_eq!(f.severity, Severity::Warning);
+        assert_eq!(f.confidence, Confidence::Likely);
     }
 
     #[test]
@@ -926,7 +929,7 @@ mod tests {
         snapshot.total_system_memory_bytes = 1000;
         snapshot.memory_bytes = 199; // 19.9%
         let findings = analyze_snapshot(&snapshot);
-        assert!(!findings.iter().any(|f| f.category == "HIGH RAM" || f.category == "OOM KILLER RISK"),
+        assert!(!findings.iter().any(|f| f.category == "HIGH RAM" || f.category == "HIGH MEMORY PRESSURE"),
             "19.9% RAM must produce no memory finding");
     }
 
@@ -939,9 +942,9 @@ mod tests {
         let findings = analyze_snapshot(&snapshot);
         assert!(findings.iter().any(|f| f.category == "HIGH RAM"),
             "20% RAM must trigger HIGH RAM");
-        // HIGH RAM and OOM KILLER RISK are mutually exclusive branches
-        assert!(!findings.iter().any(|f| f.category == "OOM KILLER RISK"),
-            "20% must NOT trigger OOM KILLER RISK (that requires >= 50%)");
+        // HIGH RAM and HIGH MEMORY PRESSURE are mutually exclusive branches
+        assert!(!findings.iter().any(|f| f.category == "HIGH MEMORY PRESSURE"),
+            "20% must NOT trigger HIGH MEMORY PRESSURE (that requires >= 50%)");
     }
 
     #[test]
@@ -951,10 +954,10 @@ mod tests {
         snapshot.total_system_memory_bytes = 1000;
         snapshot.memory_bytes = 500; // exactly 50%
         let findings = analyze_snapshot(&snapshot);
-        assert!(findings.iter().any(|f| f.category == "OOM KILLER RISK"),
-            "50% RAM must trigger OOM KILLER RISK");
+        assert!(findings.iter().any(|f| f.category == "HIGH MEMORY PRESSURE"),
+            "50% RAM must trigger HIGH MEMORY PRESSURE");
         assert!(!findings.iter().any(|f| f.category == "HIGH RAM"),
-            "OOM KILLER RISK and HIGH RAM must be mutually exclusive");
+            "HIGH MEMORY PRESSURE and HIGH RAM must be mutually exclusive");
     }
 
     #[test]
@@ -965,7 +968,7 @@ mod tests {
         snapshot.total_system_memory_bytes = 0;
         snapshot.memory_bytes = 1024;
         let findings = analyze_snapshot(&snapshot);
-        assert!(!findings.iter().any(|f| f.category == "HIGH RAM" || f.category == "OOM KILLER RISK"),
+        assert!(!findings.iter().any(|f| f.category == "HIGH RAM" || f.category == "HIGH MEMORY PRESSURE"),
             "Zero total memory must produce no memory findings");
     }
 
