@@ -595,6 +595,156 @@ node     1234  app    5r   REG    8,1     1024  123 /srv/app/index.js
     fn test_linux_live_socket_and_file_detection() {
         let self_pid = std::process::id();
         let io = get_process_io(self_pid);
-        assert!(!io.open_files.is_empty() || io.unix_sockets.is_empty() || io.network_connections.is_empty());
+        // The test process itself has stdin/stdout/stderr open at minimum
+        assert!(
+            !io.open_files.is_empty() || !io.unix_sockets.is_empty() || !io.network_connections.is_empty(),
+            "Self-process must have at least one open file descriptor visible"
+        );
+    }
+
+    // ── format_bytes ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_format_bytes_bytes() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn test_format_bytes_kilobytes() {
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+    }
+
+    #[test]
+    fn test_format_bytes_megabytes() {
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_bytes(10 * 1024 * 1024), "10.0 MB");
+    }
+
+    #[test]
+    fn test_format_bytes_gigabytes() {
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GB");
+        assert_eq!(format_bytes(4 * 1024 * 1024 * 1024), "4.0 GB");
+    }
+
+    // ── format_bytes_rate ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_format_bytes_rate_zero() {
+        assert_eq!(format_bytes_rate(0.0), "0 B/s");
+    }
+
+    #[test]
+    fn test_format_bytes_rate_kilobytes() {
+        assert_eq!(format_bytes_rate(2048.0), "2.0 KB/s");
+    }
+
+    #[test]
+    fn test_format_bytes_rate_megabytes() {
+        assert_eq!(format_bytes_rate(5.0 * 1024.0 * 1024.0), "5.0 MB/s");
+    }
+
+    #[test]
+    fn test_format_bytes_rate_gigabytes() {
+        assert_eq!(format_bytes_rate(2.0 * 1024.0 * 1024.0 * 1024.0), "2.00 GB/s");
+    }
+
+    // ── DiskIoRate::calculate ─────────────────────────────────────────────
+
+    #[test]
+    fn test_disk_io_rate_calculate_normal_delta() {
+        let start = Some(DiskIoStats { read_bytes: 0, write_bytes: 0 });
+        let end = Some(DiskIoStats { read_bytes: 1024, write_bytes: 512 });
+        let rate = DiskIoRate::calculate(start, end, 1.0).unwrap();
+        assert!((rate.read_bytes_per_sec - 1024.0).abs() < 0.01);
+        assert!((rate.write_bytes_per_sec - 512.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_disk_io_rate_calculate_zero_duration_returns_none() {
+        let start = Some(DiskIoStats { read_bytes: 0, write_bytes: 0 });
+        let end = Some(DiskIoStats { read_bytes: 1024, write_bytes: 0 });
+        assert!(DiskIoRate::calculate(start, end, 0.0).is_none(),
+            "Zero duration must return None to avoid divide-by-zero");
+    }
+
+    #[test]
+    fn test_disk_io_rate_calculate_saturating_sub_on_counter_wrap() {
+        // If end < start (counter reset / wraparound), saturating_sub gives 0
+        let start = Some(DiskIoStats { read_bytes: 1000, write_bytes: 500 });
+        let end = Some(DiskIoStats { read_bytes: 100, write_bytes: 50 });
+        let rate = DiskIoRate::calculate(start, end, 1.0).unwrap();
+        assert_eq!(rate.read_bytes_per_sec, 0.0, "Counter wrap must produce 0 read rate");
+        assert_eq!(rate.write_bytes_per_sec, 0.0, "Counter wrap must produce 0 write rate");
+    }
+
+    #[test]
+    fn test_disk_io_rate_calculate_none_start_returns_none() {
+        let end = Some(DiskIoStats { read_bytes: 1024, write_bytes: 0 });
+        assert!(DiskIoRate::calculate(None, end, 1.0).is_none());
+    }
+
+    #[test]
+    fn test_disk_io_rate_calculate_none_end_returns_none() {
+        let start = Some(DiskIoStats { read_bytes: 0, write_bytes: 0 });
+        assert!(DiskIoRate::calculate(start, None, 1.0).is_none());
+    }
+
+    // ── parse_lsof_output — edge cases ───────────────────────────────────
+
+    #[test]
+    fn test_parse_lsof_deleted_file_is_classified() {
+        let sample = "\
+p1234
+f5
+tREG
+n/var/log/app.log (deleted)
+";
+        let io = parse_lsof_output(sample);
+        assert!(io.open_files.iter().any(|f| f.contains("deleted")),
+            "Deleted file must appear in open_files");
+        assert!(io.deleted_files.iter().any(|d| d.path.contains("deleted")),
+            "Deleted file must appear in deleted_files");
+    }
+
+    #[test]
+    fn test_parse_lsof_udp_socket() {
+        let sample = "\
+p1234
+f3
+tIPv4
+PUDP
+n0.0.0.0:53
+";
+        let io = parse_lsof_output(sample);
+        assert!(io.network_connections.iter().any(|c| c.contains("UDP") && c.contains("53")),
+            "UDP socket must be classified as a network connection: {:?}", io.network_connections);
+    }
+
+    #[test]
+    fn test_parse_lsof_empty_input() {
+        let io = parse_lsof_output("");
+        assert!(io.open_files.is_empty());
+        assert!(io.unix_sockets.is_empty());
+        assert!(io.network_connections.is_empty());
+    }
+
+    #[test]
+    fn test_parse_lsof_deduplicates_entries() {
+        // Same file appearing under multiple fds must be deduplicated
+        let sample = "\
+p1234
+f3
+tREG
+n/etc/hosts
+f4
+tREG
+n/etc/hosts
+";
+        let io = parse_lsof_output(sample);
+        assert_eq!(io.open_files.iter().filter(|f| f.as_str() == "/etc/hosts").count(), 1,
+            "Duplicate open file entries must be deduplicated");
     }
 }

@@ -296,4 +296,56 @@ mod tests {
         let resolved = resolve_pid_by_port(port, &sys).unwrap();
         assert_eq!(resolved, current_pid);
     }
+
+    // ── parse_target_query — error paths ──────────────────────────────────
+
+    #[test]
+    fn test_parse_target_query_no_target_errors() {
+        let result = parse_target_query(None, None);
+        assert!(result.is_err(), "No target and no port flag must return an error");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("No target specified"), "Error must mention 'No target specified'");
+    }
+
+    #[test]
+    fn test_parse_target_query_empty_string_errors() {
+        let result = parse_target_query(Some(""), None);
+        assert!(result.is_err(), "Empty string target must return an error");
+    }
+
+    #[test]
+    fn test_parse_target_query_whitespace_only_errors() {
+        let result = parse_target_query(Some("   "), None);
+        assert!(result.is_err(), "Whitespace-only target must return an error");
+    }
+
+    #[test]
+    fn test_parse_target_query_port_flag_takes_precedence_over_positional() {
+        // Even if a positional target is also given, --port flag wins
+        let q = parse_target_query(Some("node"), Some(8080)).unwrap();
+        assert_eq!(q, TargetQuery::Port(8080),
+            "--port flag must take precedence over positional target");
+    }
+
+    #[test]
+    fn test_parse_target_query_port_prefix_out_of_u16_range_is_name() {
+        // ":99999" — port_str "99999" is > u16::MAX, parse fails → treated as Name
+        let q = parse_target_query(Some(":99999"), None).unwrap();
+        assert_eq!(q, TargetQuery::Name(":99999".to_string()),
+            "Port value exceeding u16::MAX must fall through to Name");
+    }
+
+    #[test]
+    fn test_parse_target_query_port_colon_prefix_with_name() {
+        // "port:myservice" — not a number → treated as Name
+        let q = parse_target_query(Some("port:myservice"), None).unwrap();
+        assert_eq!(q, TargetQuery::Name("port:myservice".to_string()),
+            "Non-numeric port:X target must be treated as a Name");
+    }
+
+    #[test]
+    fn test_parse_target_query_large_pid_is_pid() {
+        let q = parse_target_query(Some("65535"), None).unwrap();
+        assert_eq!(q, TargetQuery::Pid(65535));
+    }
 }

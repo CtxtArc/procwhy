@@ -522,9 +522,12 @@ pub fn redact_env_var(env_str: &str) -> String {
         let is_sensitive = sensitive_keys.iter().any(|&s| upper_k.contains(s));
 
         if is_sensitive {
-            if v.len() > 8 && (v.starts_with("sk-") || v.starts_with("ghp_")) {
-                let prefix: String = v.chars().take(3).collect();
-                return format!("{}={}*** [REDACTED]", k, prefix);
+            // Preserve well-known token prefixes for identification while masking the secret
+            if v.len() > 8 && v.starts_with("sk-") {
+                return format!("{}=sk-*** [REDACTED]", k);
+            }
+            if v.len() > 8 && v.starts_with("ghp_") {
+                return format!("{}=ghp_*** [REDACTED]", k);
             }
 
             return format!("{}=*** [REDACTED]", k);
@@ -898,5 +901,570 @@ mod tests {
             generate_summary(&three_findings),
             "Process is consuming unusually high CPU, holding open file handles to deleted files, and consuming significant system RAM."
         );
+    }
+
+    #[test]
+    fn test_generate_summary_unknown_category_uses_raw_name() {
+        let findings = vec![Finding {
+            category: "FUTURE RULE",
+            severity: Severity::Info,
+            confidence: Confidence::Possible,
+            observation: String::new(),
+            evidence: vec![],
+            interpretation: String::new(),
+            recommendation: String::new(),
+        }];
+        assert_eq!(generate_summary(&findings), "Process is FUTURE RULE.");
+    }
+
+    // ── Memory — boundary tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_memory_just_below_20_percent_is_clean() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.total_system_memory_bytes = 1000;
+        snapshot.memory_bytes = 199; // 19.9%
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "HIGH RAM" || f.category == "OOM KILLER RISK"),
+            "19.9% RAM must produce no memory finding");
+    }
+
+    #[test]
+    fn test_memory_exactly_20_percent_fires_high_ram_not_oom() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.total_system_memory_bytes = 1000;
+        snapshot.memory_bytes = 200; // exactly 20%
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "HIGH RAM"),
+            "20% RAM must trigger HIGH RAM");
+        // HIGH RAM and OOM KILLER RISK are mutually exclusive branches
+        assert!(!findings.iter().any(|f| f.category == "OOM KILLER RISK"),
+            "20% must NOT trigger OOM KILLER RISK (that requires >= 50%)");
+    }
+
+    #[test]
+    fn test_memory_exactly_50_percent_fires_oom_not_high_ram() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.total_system_memory_bytes = 1000;
+        snapshot.memory_bytes = 500; // exactly 50%
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "OOM KILLER RISK"),
+            "50% RAM must trigger OOM KILLER RISK");
+        assert!(!findings.iter().any(|f| f.category == "HIGH RAM"),
+            "OOM KILLER RISK and HIGH RAM must be mutually exclusive");
+    }
+
+    #[test]
+    fn test_memory_zero_total_does_not_panic_or_fire() {
+        // Guard clause: total_system_memory_bytes == 0 must not divide by zero
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.total_system_memory_bytes = 0;
+        snapshot.memory_bytes = 1024;
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "HIGH RAM" || f.category == "OOM KILLER RISK"),
+            "Zero total memory must produce no memory findings");
+    }
+
+    // ── CPU pegging — boundary tests ──────────────────────────────────────
+
+    #[test]
+    fn test_cpu_just_below_90_is_clean() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.cpu_usage = 89.99;
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "CPU PEGGING"),
+            "89.99% CPU must not trigger CPU PEGGING");
+    }
+
+    #[test]
+    fn test_cpu_at_exactly_90_fires() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.cpu_usage = 90.0;
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "CPU PEGGING"),
+            "Exactly 90% CPU must trigger CPU PEGGING");
+    }
+
+    #[test]
+    fn test_cpu_pegging_evidence_contains_wchan() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.cpu_usage = 99.0;
+        snapshot.wchan = Some("do_sys_poll");
+        let findings = analyze_snapshot(&snapshot);
+        let f = findings.iter().find(|f| f.category == "CPU PEGGING").unwrap();
+        assert!(f.evidence.iter().any(|e| e.contains("do_sys_poll")),
+            "CPU PEGGING evidence must include the active wchan");
+    }
+
+    // ── D-state hang ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_d_state_without_wchan_uses_fallback_text() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.status = ProcessStatus::UninterruptibleDiskSleep;
+        snapshot.wchan = None;
+        let findings = analyze_snapshot(&snapshot);
+        let f = findings.iter().find(|f| f.category == "D-STATE HANG").unwrap();
+        assert!(f.observation.contains("disk/driver I/O"),
+            "D-state without wchan must use fallback text 'disk/driver I/O'");
+    }
+
+    #[test]
+    fn test_idle_daemon_on_futex_produces_no_findings() {
+        // LOCK CONTENTION was removed — sleeping on futex with 0% CPU is normal behaviour
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.status = ProcessStatus::Sleep;
+        snapshot.cpu_usage = 0.0;
+        snapshot.wchan = Some("futex_do_wait");
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.is_empty(),
+            "Idle daemon sleeping on futex must produce zero findings");
+    }
+
+    // ── Zombie — all three detection paths ────────────────────────────────
+
+    #[test]
+    fn test_zombie_via_defunct_name() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.name = "<defunct>";
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "ZOMBIE PROCESS"),
+            "Name '<defunct>' must trigger ZOMBIE PROCESS");
+    }
+
+    #[test]
+    fn test_zombie_via_defunct_in_cmd() {
+        let io = ProcessIo::default();
+        let cmd = vec!["<defunct>".to_string()];
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.cmd = &cmd;
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "ZOMBIE PROCESS"),
+            "Cmd containing '<defunct>' must trigger ZOMBIE PROCESS");
+    }
+
+    #[test]
+    fn test_zombie_recommendation_names_parent_pid() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.status = ProcessStatus::Zombie;
+        snapshot.parent_pid = Some(42);
+        let findings = analyze_snapshot(&snapshot);
+        let f = findings.iter().find(|f| f.category == "ZOMBIE PROCESS").unwrap();
+        assert!(f.recommendation.contains("42"),
+            "Zombie recommendation must reference the parent PID");
+    }
+
+    #[test]
+    fn test_zombie_recommendation_handles_no_parent() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.status = ProcessStatus::Zombie;
+        snapshot.parent_pid = None;
+        let findings = analyze_snapshot(&snapshot);
+        let f = findings.iter().find(|f| f.category == "ZOMBIE PROCESS").unwrap();
+        assert!(f.recommendation.contains("unknown parent"),
+            "Zombie with no parent must say 'unknown parent'");
+    }
+
+    // ── Disk I/O — boundary tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_disk_io_just_below_20mb_is_clean() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.disk_io_rate = Some(DiskIoRate {
+            read_bytes_per_sec: 10.0 * 1024.0 * 1024.0,
+            write_bytes_per_sec: 9.99 * 1024.0 * 1024.0, // 19.99 MB/s total
+        });
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "HIGH DISK I/O"),
+            "19.99 MB/s must not trigger HIGH DISK I/O");
+    }
+
+    #[test]
+    fn test_disk_io_exactly_20mb_fires() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.disk_io_rate = Some(DiskIoRate {
+            read_bytes_per_sec: 20.0 * 1024.0 * 1024.0,
+            write_bytes_per_sec: 0.0,
+        });
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "HIGH DISK I/O"),
+            "Exactly 20 MB/s must trigger HIGH DISK I/O");
+    }
+
+    #[test]
+    fn test_disk_io_none_is_clean() {
+        let io = ProcessIo::default();
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.disk_io_rate = None;
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "HIGH DISK I/O"));
+    }
+
+    // ── Wildcard listener — all bind patterns ──────────────────────────────
+
+    #[test]
+    fn test_loopback_listener_not_flagged_as_public() {
+        let io = ProcessIo {
+            network_connections: vec!["TCP 127.0.0.1:8080 (LISTEN)".to_string()],
+            ..Default::default()
+        };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "PUBLIC LISTENER"),
+            "127.0.0.1:8080 must NOT be flagged as PUBLIC LISTENER");
+    }
+
+    #[test]
+    fn test_ipv6_loopback_not_flagged_as_public() {
+        let io = ProcessIo {
+            network_connections: vec!["TCP [::1]:9000 (LISTEN)".to_string()],
+            ..Default::default()
+        };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "PUBLIC LISTENER"),
+            "[::1] loopback must NOT be PUBLIC LISTENER");
+    }
+
+    #[test]
+    fn test_ipv6_wildcard_flagged_as_public() {
+        let io = ProcessIo {
+            network_connections: vec!["TCP [::]:443 (LISTEN)".to_string()],
+            ..Default::default()
+        };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "PUBLIC LISTENER"),
+            "[::]:443 wildcard must be PUBLIC LISTENER");
+    }
+
+    #[test]
+    fn test_star_colon_wildcard_flagged_as_public() {
+        let io = ProcessIo {
+            network_connections: vec!["TCP *:3000 (LISTEN)".to_string()],
+            ..Default::default()
+        };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "PUBLIC LISTENER"),
+            "TCP *:3000 must be PUBLIC LISTENER");
+    }
+
+    #[test]
+    fn test_multiple_wildcard_binds_produce_one_finding_with_count() {
+        let io = ProcessIo {
+            network_connections: vec![
+                "TCP 0.0.0.0:80 (LISTEN)".to_string(),
+                "TCP 0.0.0.0:443 (LISTEN)".to_string(),
+            ],
+            ..Default::default()
+        };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        let count = findings.iter().filter(|f| f.category == "PUBLIC LISTENER").count();
+        assert_eq!(count, 1, "Multiple wildcard binds must produce exactly one PUBLIC LISTENER finding");
+        let f = findings.iter().find(|f| f.category == "PUBLIC LISTENER").unwrap();
+        assert!(f.observation.contains("2"), "Observation must mention the count when > 1");
+    }
+
+    #[test]
+    fn test_established_conn_does_not_trigger_public_listener() {
+        let io = ProcessIo {
+            network_connections: vec![
+                "TCP 0.0.0.0:12345 -> 1.2.3.4:443 (ESTABLISHED)".to_string(),
+            ],
+            ..Default::default()
+        };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "PUBLIC LISTENER"),
+            "ESTABLISHED connections must not trigger PUBLIC LISTENER");
+    }
+
+    // ── External TCP connections ───────────────────────────────────────────
+
+    #[test]
+    fn test_exactly_10_external_conns_not_flagged() {
+        // Threshold is > 10, so 10 must NOT fire
+        let conns: Vec<String> = (1u16..=10)
+            .map(|i| format!("TCP 10.0.0.1:5{i:04} -> 1.2.3.{i}:443 (ESTABLISHED)"))
+            .collect();
+        let io = ProcessIo { network_connections: conns, ..Default::default() };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "HIGH TCP CONNS"),
+            "Exactly 10 external connections must NOT trigger HIGH TCP CONNS");
+    }
+
+    #[test]
+    fn test_11_external_conns_fires() {
+        let conns: Vec<String> = (1u16..=11)
+            .map(|i| format!("TCP 10.0.0.1:5{i:04} -> 1.2.3.{i}:443 (ESTABLISHED)"))
+            .collect();
+        let io = ProcessIo { network_connections: conns, ..Default::default() };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "HIGH TCP CONNS"),
+            "11 external connections must trigger HIGH TCP CONNS");
+    }
+
+    #[test]
+    fn test_loopback_conns_not_counted_as_external() {
+        let conns: Vec<String> = (1u16..=15)
+            .map(|i| format!("TCP 127.0.0.1:5{i:04} -> 127.0.0.1:8080 (ESTABLISHED)"))
+            .collect();
+        let io = ProcessIo { network_connections: conns, ..Default::default() };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "HIGH TCP CONNS"),
+            "Loopback connections must not count toward HIGH TCP CONNS");
+    }
+
+    #[test]
+    fn test_listen_sockets_not_counted_as_external() {
+        let conns: Vec<String> = (1u16..=15)
+            .map(|i| format!("TCP 0.0.0.0:{i} (LISTEN)"))
+            .collect();
+        let io = ProcessIo { network_connections: conns, ..Default::default() };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "HIGH TCP CONNS"),
+            "LISTEN sockets must not count as external connections");
+    }
+
+    // ── Deleted files ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_deleted_files_detected_via_open_files_fallback() {
+        let io = ProcessIo {
+            open_files: vec![
+                "/var/log/app.log (deleted)".to_string(),
+                "/etc/config.conf".to_string(),
+            ],
+            deleted_files: vec![], // empty — relies on fallback scan of open_files
+            ..Default::default()
+        };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "DELETED FILES"),
+            "open_files fallback must detect '(deleted)' strings");
+    }
+
+    #[test]
+    fn test_regular_files_not_flagged_as_deleted() {
+        let io = ProcessIo {
+            open_files: vec!["/var/log/app.log".to_string(), "/etc/hosts".to_string()],
+            deleted_files: vec![],
+            ..Default::default()
+        };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        assert!(!findings.iter().any(|f| f.category == "DELETED FILES"),
+            "Regular open files must not trigger DELETED FILES");
+    }
+
+    #[test]
+    fn test_deleted_files_reports_size_when_known() {
+        let io = ProcessIo {
+            open_files: vec!["/var/log/app.log (deleted)".to_string()],
+            deleted_files: vec![crate::io::DeletedFile {
+                path: "/var/log/app.log (deleted)".to_string(),
+                size_bytes: 512 * 1024 * 1024, // 512 MB
+            }],
+            ..Default::default()
+        };
+        let snapshot = dummy_snapshot(&io);
+        let findings = analyze_snapshot(&snapshot);
+        let f = findings.iter().find(|f| f.category == "DELETED FILES").unwrap();
+        let all_text = format!("{} {}", f.observation, f.evidence.join(" "));
+        assert!(all_text.contains("512.0 MB"), "Finding must report the deleted file size");
+    }
+
+    // ── Privileged ports ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_port_1023_is_privileged() {
+        let io = ProcessIo {
+            network_connections: vec!["TCP 127.0.0.1:1023 (LISTEN)".to_string()],
+            ..Default::default()
+        };
+        let findings = analyze_snapshot(&dummy_snapshot(&io));
+        assert!(findings.iter().any(|f| f.category == "PRIVILEGED PORT"),
+            "Port 1023 must be PRIVILEGED PORT");
+    }
+
+    #[test]
+    fn test_port_1024_not_privileged() {
+        let io = ProcessIo {
+            network_connections: vec!["TCP 127.0.0.1:1024 (LISTEN)".to_string()],
+            ..Default::default()
+        };
+        let findings = analyze_snapshot(&dummy_snapshot(&io));
+        assert!(!findings.iter().any(|f| f.category == "PRIVILEGED PORT"),
+            "Port 1024 must NOT be PRIVILEGED PORT (threshold is < 1024)");
+    }
+
+    #[test]
+    fn test_outbound_to_well_known_port_not_privileged() {
+        let io = ProcessIo {
+            network_connections: vec![
+                "TCP 192.168.1.5:54321 -> 8.8.8.8:80 (ESTABLISHED)".to_string(),
+            ],
+            ..Default::default()
+        };
+        let findings = analyze_snapshot(&dummy_snapshot(&io));
+        assert!(!findings.iter().any(|f| f.category == "PRIVILEGED PORT"),
+            "Connecting TO port 80 must not trigger PRIVILEGED PORT (only LISTEN matters)");
+    }
+
+    // ── High FD count ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_fd_count_field_beats_io_sum() {
+        let io = ProcessIo {
+            open_files: vec!["a".to_string(), "b".to_string()],
+            unix_sockets: vec!["c".to_string()],
+            ..Default::default()
+        };
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.fd_count = 300; // real count (300) dominates io-sum (3)
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "HIGH FD COUNT"),
+            "fd_count=300 must trigger HIGH FD COUNT even when io-sum is 3");
+        let f = findings.iter().find(|f| f.category == "HIGH FD COUNT").unwrap();
+        assert!(f.observation.contains("300"), "Observation must use real fd_count=300");
+    }
+
+    #[test]
+    fn test_fd_count_zero_uses_io_sum_fallback() {
+        let sockets: Vec<String> = (0..260).map(|i| format!("s{}", i)).collect();
+        let io = ProcessIo { unix_sockets: sockets, ..Default::default() };
+        let mut snapshot = dummy_snapshot(&io);
+        snapshot.fd_count = 0; // signals "not measured"
+        let findings = analyze_snapshot(&snapshot);
+        assert!(findings.iter().any(|f| f.category == "HIGH FD COUNT"),
+            "fd_count=0 with 260 unix_sockets must use io-sum fallback and trigger HIGH FD COUNT");
+    }
+
+    // ── Findings severity sort order ──────────────────────────────────────
+
+    #[test]
+    fn test_findings_sorted_critical_before_warning_before_info() {
+        let io = ProcessIo {
+            network_connections: vec!["TCP 127.0.0.1:22 (LISTEN)".to_string()],
+            ..Default::default()
+        };
+        let mut snapshot = dummy_snapshot(&io);
+        // D-STATE = Critical, CPU PEGGING = Warning, PRIVILEGED PORT = Info
+        snapshot.status = ProcessStatus::UninterruptibleDiskSleep;
+        snapshot.cpu_usage = 99.0;
+        let findings = analyze_snapshot(&snapshot);
+        for w in findings.windows(2) {
+            assert!(w[0].severity >= w[1].severity,
+                "Severity must be non-ascending: {:?} before {:?}", w[0].severity, w[1].severity);
+        }
+    }
+
+    // ── Credential redaction ──────────────────────────────────────────────
+
+    #[test]
+    fn test_redact_bearer_auth_header() {
+        let result = redact_env_var("AUTHORIZATION=Bearer eyJhbGciOiJSUzI1NiJ9.payload.sig");
+        assert!(result.contains("*** [REDACTED]"), "Bearer token must be redacted: {}", result);
+    }
+
+    #[test]
+    fn test_redact_github_token_keeps_prefix() {
+        let result = redact_env_var("GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz012345");
+        assert!(result.starts_with("GITHUB_TOKEN=ghp_*** [REDACTED]"),
+            "ghp_ prefix must be preserved: {}", result);
+    }
+
+    #[test]
+    fn test_redact_openai_key_keeps_sk_prefix() {
+        let result = redact_env_var("OPENAI_API_KEY=sk-projXYZ1234567890");
+        assert!(result.starts_with("OPENAI_API_KEY=sk-*** [REDACTED]"),
+            "sk- prefix must be preserved: {}", result);
+    }
+
+    #[test]
+    fn test_redact_safe_env_vars_pass_through_unchanged() {
+        for var in &[
+            "PATH=/usr/local/bin:/usr/bin:/bin",
+            "HOME=/home/alice",
+            "TERM=xterm-256color",
+            "LANG=en_US.UTF-8",
+            "SHELL=/bin/bash",
+        ] {
+            assert_eq!(redact_env_var(var), *var, "Safe env var must not be modified: {}", var);
+        }
+    }
+
+    #[test]
+    fn test_redact_no_equals_sign_passes_through() {
+        assert_eq!(redact_env_var("NOSEPARATOR"), "NOSEPARATOR");
+    }
+
+    #[test]
+    fn test_redact_uri_without_credentials_unchanged() {
+        let result = redact_env_var("BASE_URL=https://api.example.com/v1");
+        assert_eq!(result, "BASE_URL=https://api.example.com/v1",
+            "URI without credentials must not be mangled");
+    }
+
+    #[test]
+    fn test_redact_tls_cert_key() {
+        let result = redact_env_var("TLS_CERT_KEY=-----BEGIN RSA PRIVATE KEY-----");
+        assert!(result.contains("*** [REDACTED]"), "TLS_CERT_KEY must be redacted: {}", result);
+    }
+
+    // ── Health::from_findings — all four levels ───────────────────────────
+
+    #[test]
+    fn test_health_ok_with_no_findings() {
+        assert_eq!(Health::from_findings(&[]), Health::Ok);
+    }
+
+    #[test]
+    fn test_health_critical_dominates_warning_and_info() {
+        let make = |sev: Severity| Finding {
+            category: "X",
+            severity: sev,
+            confidence: Confidence::Confirmed,
+            observation: String::new(),
+            evidence: vec![],
+            interpretation: String::new(),
+            recommendation: String::new(),
+        };
+        let findings = vec![make(Severity::Warning), make(Severity::Critical), make(Severity::Info)];
+        assert_eq!(Health::from_findings(&findings), Health::Critical);
+    }
+
+    #[test]
+    fn test_health_info_when_only_info_findings() {
+        let findings = vec![Finding {
+            category: "PRIVILEGED PORT",
+            severity: Severity::Info,
+            confidence: Confidence::Confirmed,
+            observation: String::new(),
+            evidence: vec![],
+            interpretation: String::new(),
+            recommendation: String::new(),
+        }];
+        assert_eq!(Health::from_findings(&findings), Health::Info);
     }
 }
