@@ -162,6 +162,7 @@ pub fn build_process_ancestry(pid: Pid, sys: &System) -> Vec<JsonAncestryNode> {
     lineage
 }
 
+#[allow(unused_variables)]
 pub fn get_process_cwd(pid: u32, proc_cwd: Option<&std::path::Path>) -> String {
     if let Some(cwd) = proc_cwd {
         let s = cwd.to_string_lossy().to_string();
@@ -176,7 +177,9 @@ pub fn get_process_cwd(pid: u32, proc_cwd: Option<&std::path::Path>) -> String {
     "unknown".to_string()
 }
 
+#[allow(unused_variables)]
 pub fn get_process_user(pid: u32, proc_uid: Option<&sysinfo::Uid>, users: &Users) -> String {
+    #[allow(unused_mut)]
     let mut uid_num = proc_uid.and_then(|u| u.to_string().parse::<u32>().ok());
 
     #[cfg(target_os = "linux")]

@@ -1,5 +1,7 @@
 use serde::Serialize;
+#[cfg(target_os = "linux")]
 use std::collections::HashSet;
+#[cfg(target_os = "linux")]
 use std::fs;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
