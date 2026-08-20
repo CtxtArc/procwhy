@@ -29,51 +29,142 @@ Instead of dumping raw counters, `procwhy` gives you structured findings: what t
 `ps`, `top`, `lsof`, and `ss` each show one slice of the picture.
 `procwhy` brings those slices together and tells you what questions to ask next.
 
-## Real-World Examples
+## 5 Incidents procwhy Can Diagnose in Seconds
 
-### 1. Disk space isn't freed after deleting log files
-> **Incident**: `df -h` reports `100% full`, but `du -sh *` doesn't show where the space went. You unlinked old log files, but the disk was never released.
+### 1. "Disk is 100% full but `du` shows nothing"
+
+You delete log files. `df` still says full. `du` shows nothing. The space is gone but the disk won't release it.
+
+**What's happening:** a running process still holds an open file descriptor to the deleted file. The kernel keeps the blocks allocated until that descriptor closes.
 
 ```bash
-$ procwhy myapp
+$ procwhy nginx
+
+HEALTH  WARN
 
 WARN: [DELETED FILES]  [CONFIRMED]
-  Observation:     1 deleted file descriptor held open (8.7 GB allocated on disk).
-  Evidence:        1 deleted file descriptor | Sample path: /var/log/myapp.log (deleted)
-  Interpretation:  The file was unlinked but remains allocated on disk because the process still holds an open descriptor.
-  Recommendation:  Restart or reload the process to release the descriptor and free disk space.
+  Observation:    3 deleted file descriptor(s) held open (11.2 GB allocated on disk).
+  Evidence:       3 deleted file descriptors
+                  Total disk space held: 11.2 GB
+                  Largest deleted file: /var/log/nginx/access.log (8.7 GB)
+  Interpretation: Filesystem space remains allocated and cannot be reclaimed
+                  until those descriptors close.
+  Recommendation: Restart or signal the process to release deleted file handles
+                  and free disk space.
 ```
 
-### 2. Process won't terminate even with `kill -9`
-> **Incident**: A worker process hangs indefinitely and ignores `SIGKILL` (`kill -9`).
+**Diagnosis: 4 seconds.** `nginx -s reopen` or a graceful restart frees 11 GB instantly.
+
+---
+
+### 2. "`kill -9` does nothing — the process is unkillable"
+
+The process hangs. You escalate to `kill -9`. Nothing. The process is still there minutes later.
+
+**What's happening:** the process is in D-state — `TASK_UNINTERRUPTIBLE` — blocked inside a kernel driver waiting for I/O that will never come back. The kernel defers all signals, including `SIGKILL`, until the blocking syscall returns.
 
 ```bash
 $ procwhy worker
 
+HEALTH  CRITICAL
+
 CRITICAL: [D-STATE HANG]  [CONFIRMED]
-  Observation:     Process is in Uninterruptible Sleep (D-state) on kernel wait channel 'nfs_wait_client'.
-  Evidence:        Scheduler state: TASK_UNINTERRUPTIBLE (D) | Kernel wait channel (wchan): nfs_wait_client
-  Interpretation:  Process is blocked inside a kernel driver or storage I/O operation. POSIX signals (including SIGKILL) are deferred until the kernel I/O unblocks.
-  Recommendation:  Inspect storage subsystem, hung NFS mounts, or kernel dmesg logs for storage/driver timeouts.
+  Observation:    Process is in Uninterruptible Sleep (D-state) on kernel
+                  wait channel 'nfs_wait_client'.
+  Evidence:       Scheduler state: TASK_UNINTERRUPTIBLE (D)
+                  Kernel wait channel (wchan): nfs_wait_client
+  Interpretation: Process is blocked inside a kernel driver or storage I/O
+                  operation. POSIX signals (including SIGKILL) are deferred
+                  until the kernel I/O request unblocks.
+  Recommendation: Inspect storage subsystem, hung NFS mounts, or kernel
+                  dmesg logs for storage/driver timeouts.
 ```
 
-### 3. "What is using port 8080?"
-> **Incident**: A deployment fails with `EADDRINUSE: address already in use :::8080`.
+**Diagnosis: 4 seconds.** Stop looking at the process — look at the NFS mount.
+
+---
+
+### 3. "Something is using port 8080 and my deployment is failing"
+
+Your deploy fails with `EADDRINUSE`. You have no idea what is holding the port.
 
 ```bash
 $ procwhy :8080
 
 PORT :8080 ─> node (PID 4812)  node /srv/api/server.js
-────────────────────────────────────────────────────────────
+
+HEALTH  WARN
 
 WARN: [PUBLIC LISTENER]  [POSSIBLE]
-  Observation:     Process is bound to wildcard interface: TCP 0.0.0.0:8080 (LISTEN)
-  Evidence:        Listener: TCP 0.0.0.0:8080 | Active external connections: 17
-  Interpretation:  This socket accepts connections on all network interfaces. For many services this is intentional and correct. Whether it represents a risk depends on firewall rules, network topology, and whether the service is meant to be externally reachable.
-  Recommendation:  Confirm the service is intended to be publicly reachable. If not, bind to 127.0.0.1 or a specific interface instead.
+  Observation:    Process is bound to wildcard interface: TCP 0.0.0.0:8080 (LISTEN)
+  Evidence:       Listener bind: TCP 0.0.0.0:8080 (LISTEN)
+  Interpretation: This socket accepts connections on all network interfaces.
+                  For many services this is intentional and correct. Whether it
+                  represents a risk depends on firewall rules and network topology.
+  Recommendation: Confirm the service is intended to be publicly reachable.
+                  If not, bind to 127.0.0.1 or a specific interface instead.
 ```
 
+**Diagnosis: 4 seconds.** Port owned by `node` PID 4812 — a previous deploy left a process running.
+
 ---
+
+### 4. "We have zombie processes piling up"
+
+`ps aux` shows dozens of `<defunct>` processes. They can't be killed. Over time they exhaust your PID table.
+
+**What's happening:** the parent process is not calling `waitpid()` to reap terminated children. Until it does, the kernel keeps the process descriptor alive.
+
+```bash
+$ procwhy 7341
+
+HEALTH  CRITICAL
+
+CRITICAL: [ZOMBIE PROCESS]  [CONFIRMED]
+  Observation:    Defunct process. It has terminated but parent PID 7302 has not
+                  reaped its exit status via waitpid().
+  Evidence:       Scheduler state: Zombie
+                  Parent: parent PID 7302
+  Interpretation: The process descriptor remains allocated in the kernel process
+                  table until reaped by its parent.
+  Recommendation: Signal parent PID 7302 or restart the parent to reap
+                  terminated child processes.
+```
+
+**Diagnosis: 4 seconds.** The parent (PID 7302) has a bug — it spawns children but never reaps them. Fix the parent, not the zombies.
+
+---
+
+### 5. "The server got OOM-killed overnight — find out who"
+
+You wake up to a dead service. The OOM killer struck. You need to know which process was responsible before it happens again.
+
+```bash
+$ procwhy myservice
+
+HEALTH  WARN
+
+WARN: [HIGH MEMORY PRESSURE]  [LIKELY]
+  Observation:    Resident memory is 6140.3 MB (38.4% of 16.0 GB host RAM).
+  Evidence:       Resident memory (RSS): 6140.3 MB
+                  Host RAM share: 38.4%
+                  Total host RAM: 16.0 GB
+                  Note: cgroup limits, swap, and overcommit are not accounted for here.
+  Interpretation: RSS accounts for a substantial portion of visible host RAM.
+                  Whether this causes an OOM event depends on swap availability,
+                  cgroup memory limits, and kernel overcommit policy.
+  Recommendation: Verify memory growth trend, check cgroup memory limits
+                  (memory.max), and inspect swap usage before concluding the
+                  process is at OOM risk.
+
+SUMMARY
+  Process is consuming a large portion of host RAM (verify cgroup limits and swap).
+```
+
+**Diagnosis: 4 seconds.** 6 GB RSS and growing — check `memory.max` in the cgroup and compare against swap. You now have the right questions to ask.
+
+---
+
 
 ## The Diagnostic Engine
 
