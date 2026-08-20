@@ -9,7 +9,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Release-v1.0.0-blue" alt="Release">
   <img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status">
-  <img src="https://img.shields.io/badge/Tests-29_passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-103_passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/Latency-13ms_warm-brightgreen" alt="Latency">
   <img src="https://img.shields.io/badge/License-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/Platform-Linux_%7C_macOS-lightgrey" alt="Platform">
